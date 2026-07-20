@@ -1,0 +1,14 @@
+# STM32CubeIDE build output (regenerated on every build)
+Debug/
+Release/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# 4-mic capture outputs (regenerated from the board each run)
+capture.npy
+mic0.wav
+mic1.wav
+mic2.wav
+mic3.wav
