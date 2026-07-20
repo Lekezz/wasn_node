@@ -34,7 +34,8 @@
 
 //Data specs of mics and hardware
 #define SAMPLE_RATE   16000
-#define RECORD_SECS   4
+#define RECORD_SECS   1
+#define NUM_MICS      4
 #define TOTAL_SAMPLES (SAMPLE_RATE * RECORD_SECS)
 #define DMA_BUF_LEN   2048
 /* USER CODE END PD */
@@ -63,12 +64,12 @@ DMA_HandleTypeDef hdma_dfsdm1_flt2;
 
 /* USER CODE BEGIN PV */
 
-//data instantiation
-int32_t dma_buf[DMA_BUF_LEN];
-int16_t recording[TOTAL_SAMPLES];
-volatile uint32_t rec_index = 0;
+//data instantiation, one slot per mic
+int32_t dma_buf[NUM_MICS][DMA_BUF_LEN];
+int16_t recording[NUM_MICS][TOTAL_SAMPLES];
+volatile uint32_t rec_index[NUM_MICS];
+volatile uint8_t half_flag[NUM_MICS], full_flag[NUM_MICS];
 volatile uint8_t recording_active = 0;
-volatile uint8_t half_flag = 0, full_flag = 0;
 extern UART_HandleTypeDef hcom_uart[];
 /* USER CODE END PV */
 
@@ -85,11 +86,21 @@ static void MX_DFSDM1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-//stores samples into beffur
-void store_samples(int32_t *src, uint32_t count)
+/* filter0=ch2 PE7 rising -> mic0, filter1=ch1 PE7 falling -> mic1,
+   filter2=ch0 PB1 rising -> mic2, filter3=ch3 PB1 falling -> mic3 */
+static int filter_to_mic(DFSDM_Filter_HandleTypeDef *f)
 {
-    for (uint32_t i = 0; i < count && rec_index < TOTAL_SAMPLES; i++) {
-        recording[rec_index++] = (int16_t)(src[i] >> 8);
+    if (f == &hdfsdm1_filter0) return 0;
+    if (f == &hdfsdm1_filter1) return 1;
+    if (f == &hdfsdm1_filter2) return 2;
+    return 3;
+}
+
+//stores samples into per-mic buffer
+static void store_samples(int mic, int32_t *src, uint32_t count)
+{
+    for (uint32_t i = 0; i < count && rec_index[mic] < TOTAL_SAMPLES; i++) {
+        recording[mic][rec_index[mic]++] = (int16_t)(src[i] >> 8);
     }
 }
 /* USER CODE END 0 */
@@ -127,6 +138,16 @@ int main(void)
   MX_ICACHE_Init();
   MX_DFSDM1_Init();
   /* USER CODE BEGIN 2 */
+
+  /* Force filters 1-3 onto the sync trigger so they start in lockstep when
+     filter0 starts. CubeMX generates SW_TRIGGER for all four; re-init the
+     three slaves here so this holds even after a future regeneration. */
+  hdfsdm1_filter1.Init.RegularParam.Trigger = DFSDM_FILTER_SYNC_TRIGGER;
+  hdfsdm1_filter2.Init.RegularParam.Trigger = DFSDM_FILTER_SYNC_TRIGGER;
+  hdfsdm1_filter3.Init.RegularParam.Trigger = DFSDM_FILTER_SYNC_TRIGGER;
+  if (HAL_DFSDM_FilterInit(&hdfsdm1_filter1) != HAL_OK) Error_Handler();
+  if (HAL_DFSDM_FilterInit(&hdfsdm1_filter2) != HAL_OK) Error_Handler();
+  if (HAL_DFSDM_FilterInit(&hdfsdm1_filter3) != HAL_OK) Error_Handler();
 
   /* USER CODE END 2 */
 
@@ -169,66 +190,78 @@ int main(void)
 	      {
 	        BspButtonState = BUTTON_RELEASED;   /* consume the press so it fires once */
 
-	        /* fresh start: rewind the recording and clear stale flags
-	           left over from any previous run */
-	        rec_index = 0;
-	        half_flag = 0;
-	        full_flag = 0;
+	        /* fresh start: rewind every mic and clear stale flags left over
+	           from any previous run */
+	        for (int m = 0; m < NUM_MICS; m++) {
+	          rec_index[m] = 0;
+	          half_flag[m] = 0;
+	          full_flag[m] = 0;
+	        }
 	        recording_active = 1;
 
 	        BSP_LED_On(LED_GREEN);              /* "recording" light */
 
-	        /* Arm the whole hardware chain. From here on, mic -> DFSDM ->
-	           DMA -> dma_buf runs with zero CPU involvement. The DMA will
-	           interrupt us at the buffer's halfway point and at the end,
-	           over and over, because it's in circular mode. */
-	        if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, dma_buf, DMA_BUF_LEN) != HAL_OK)
-	        {
-	          Error_Handler();
-	        }
+	        /* Arm the whole hardware chain. Start the three sync-armed slave
+	           filters first; they wait. filter0 is started LAST and its start
+	           releases all four at the same instant, so the channels stay
+	           sample-aligned. From here on, mic -> DFSDM -> DMA -> dma_buf runs
+	           with zero CPU involvement; circular DMA interrupts us at each
+	           buffer's halfway point and at its end, over and over. */
+	        if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter1, dma_buf[1], DMA_BUF_LEN) != HAL_OK) Error_Handler();
+	        if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter2, dma_buf[2], DMA_BUF_LEN) != HAL_OK) Error_Handler();
+	        if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter3, dma_buf[3], DMA_BUF_LEN) != HAL_OK) Error_Handler();
+	        if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, dma_buf[0], DMA_BUF_LEN) != HAL_OK) Error_Handler();
 	      }
 
-	      /* STATE 2: RECORDING. The hardware is filling dma_buf on its own.
-	         Our only job is to drain each half after the interrupt flags it. */
+	      /* STATE 2: RECORDING. The hardware is filling all four dma_buf[m] on
+	         its own. Our only job is to drain each half after its interrupt
+	         flags it. */
 	      if (recording_active)
 	      {
-	        if (half_flag) {
-	          half_flag = 0;                    /* lower the hand */
-	          /* First half is complete and stable; DMA is now writing the
-	             second half, so reading the first half is safe. Convert its
-	             1024 raw 32-bit results to int16 and append to the big array. */
-	          store_samples(&dma_buf[0], DMA_BUF_LEN / 2);
-	        }
-	        if (full_flag) {
-	          full_flag = 0;
-	          /* Second half is complete; DMA has wrapped and is overwriting
-	             the first half. Drain the second half now. */
-	          store_samples(&dma_buf[DMA_BUF_LEN / 2], DMA_BUF_LEN / 2);
+	        for (int m = 0; m < NUM_MICS; m++) {
+	          if (half_flag[m]) {
+	            half_flag[m] = 0;               /* lower the hand */
+	            /* First half stable; DMA is now writing the second half, so
+	               reading the first half is safe. */
+	            store_samples(m, &dma_buf[m][0], DMA_BUF_LEN / 2);
+	          }
+	          if (full_flag[m]) {
+	            full_flag[m] = 0;
+	            /* Second half complete; DMA has wrapped to the first half. */
+	            store_samples(m, &dma_buf[m][DMA_BUF_LEN / 2], DMA_BUF_LEN / 2);
+	          }
 	        }
 
-	        /* Enough audio banked? (store_samples stops itself exactly at
-	           TOTAL_SAMPLES, so we can't overrun the array.) */
-	        if (rec_index >= TOTAL_SAMPLES)
+	        /* Done only once every mic has banked TOTAL_SAMPLES. */
+	        uint8_t all_done = 1;
+	        for (int m = 0; m < NUM_MICS; m++)
+	          if (rec_index[m] < TOTAL_SAMPLES) all_done = 0;
+
+	        if (all_done)
 	        {
 	          HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter0);  /* silence the chain */
+	          HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter1);
+	          HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter2);
+	          HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter3);
 	          recording_active = 0;             /* back to idle after this */
 	          BSP_LED_Off(LED_GREEN);
 
-	          /* Ship the whole recording to the PC as raw bytes. Blocking
-	             call, ~11 s at 115200 baud. Blue LED = "transmitting". */
+	          /* Ship all four channels to the PC. Blue LED = "transmitting".
+	             Protocol: 8-byte header "WAV4" + little-endian uint32 of the
+	             per-channel byte count, then the four channels back to back in
+	             mic order. At RECORD_SECS=1 each channel is 32000 bytes, which
+	             fits one HAL_UART_Transmit (uint16_t size limit is 65535), so no
+	             chunking loop is needed. If RECORD_SECS ever grows, bring the
+	             chunking loop back. */
 	          BSP_LED_On(LED_BLUE);
-	          /* UART size argument is uint16_t (max 65535), and our dump is
-	                     128000 bytes, so send it in chunks. 32000 bytes per chunk,
-	                     four chunks total. */
-	                  uint8_t *tx_ptr = (uint8_t *)recording;
-	                  uint32_t remaining = TOTAL_SAMPLES * 2u;
-	                  while (remaining > 0)
-	                  {
-	                    uint16_t chunk = (remaining > 32000u) ? 32000u : (uint16_t)remaining;
-	                    HAL_UART_Transmit(&hcom_uart[COM1], tx_ptr, chunk, HAL_MAX_DELAY);
-	                    tx_ptr += chunk;
-	                    remaining -= chunk;
-	                  }
+	          uint32_t nbytes = TOTAL_SAMPLES * 2u;
+	          uint8_t header[8] = { 'W','A','V','4',
+	                                (uint8_t)nbytes, (uint8_t)(nbytes >> 8),
+	                                (uint8_t)(nbytes >> 16), (uint8_t)(nbytes >> 24) };
+	          HAL_UART_Transmit(&hcom_uart[COM1], header, 8, HAL_MAX_DELAY);
+	          for (int m = 0; m < NUM_MICS; m++)
+	            HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t *)recording[m],
+	                              (uint16_t)nbytes, HAL_MAX_DELAY);
 	          BSP_LED_Off(LED_BLUE);
 	        }
 	      }
@@ -520,15 +553,17 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-//interrupts for when buffer is half full and completely full
+//interrupts for when a mic's DMA buffer is half full and completely full.
+//The callback maps the reporting filter back to its mic index so all four
+//channels share the same drain path.
 void HAL_DFSDM_FilterRegConvHalfCpltCallback(DFSDM_Filter_HandleTypeDef *f)
 {
-    half_flag = 1;
+    half_flag[filter_to_mic(f)] = 1;
 }
 
 void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *f)
 {
-    full_flag = 1;
+    full_flag[filter_to_mic(f)] = 1;
 }
 /* USER CODE END 4 */
 
