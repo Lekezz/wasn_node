@@ -57,14 +57,24 @@ def load_capture(path):
 
 
 def channel_health(cap):
-    """Print per channel level stats and flag anything obviously wrong."""
-    print("channel health")
+    """
+    Print per channel level stats and flag anything obviously wrong.
+
+    Everything here is computed with DC removed first. That is not a
+    detail: a loud clap leaves a DC excursion that decays over several
+    hundred ms, and it is larger on whichever mics got the louder clap.
+    Raw RMS therefore mostly measures that tail and makes matched
+    channels look like they have a 2x gain mismatch. Measure AC or the
+    numbers lie.
+    """
+    print("channel health (DC removed before rms and peak)")
     print("  mic    rms     peak     mean(DC)   clipped")
     problems = []
     for m, sig in enumerate(cap):
-        rms = float(np.sqrt(np.mean(sig ** 2)))
-        peak = float(np.max(np.abs(sig)))
         dc = float(np.mean(sig))
+        ac = sig - dc
+        rms = float(np.sqrt(np.mean(ac ** 2)))
+        peak = float(np.max(np.abs(ac)))
         clipped = int(np.sum(np.abs(sig) >= 32700))
         print(f"  {m}   {rms:8.1f} {peak:8.0f} {dc:10.1f} {clipped:9d}")
 
@@ -76,9 +86,13 @@ def channel_health(cap):
             problems.append(f"mic{m} clipped on {clipped} samples. Clap from "
                             f"further away or the peak position is unreliable.")
         if abs(dc) > 2000:
-            problems.append(f"mic{m} has a large DC offset ({dc:.0f}). Usually "
-                            f"filter settling; if it persists, check the "
-                            f"right bit shift for that channel.")
+            problems.append(f"mic{m} has a large mean DC ({dc:.0f}). Expected "
+                            f"after a loud clap: the excursion decays over a "
+                            f"few hundred ms and there is no DC blocking in "
+                            f"the sinc path. Only worrying if it is also "
+                            f"large BEFORE the transient (see the DC drift "
+                            f"table), which would point at that channel's "
+                            f"right bit shift or offset.")
     print()
     return problems
 
@@ -110,6 +124,47 @@ def find_clap(cap):
     return onset
 
 
+def dc_drift(cap, onset):
+    """
+    Show DC before the transient and in blocks after it.
+
+    This is the table that separates the two very different things a big
+    DC number can mean. Small before and large after means the clap
+    kicked the front end and it is recovering, which is normal and
+    harmless for TDOA. Large before as well means a real per-channel
+    offset problem (right bit shift, Offset field, or a mic that is not
+    actually streaming), which is worth fixing.
+    """
+    print("DC drift (mean per 2000-sample block)")
+    print("  block    " + "".join(f"  mic{m}  " for m in range(cap.shape[0])))
+    for b in range(0, cap.shape[1], 2000):
+        seg = cap[:, b:b + 2000]
+        mark = " <- clap" if b <= onset < b + 2000 else ""
+        vals = "".join(f"{seg[m].mean():7.0f} " for m in range(cap.shape[0]))
+        print(f"  {b:5d}   {vals}{mark}")
+
+    pre = cap[:, :max(onset - 200, 1)]
+    pre_dc = [float(pre[m].mean()) for m in range(cap.shape[0])]
+    print(f"  pre-clap DC: " +
+          "  ".join(f"mic{m} {pre_dc[m]:.0f}" for m in range(cap.shape[0])))
+
+    # The honest channel-matching metric. The whole-capture rms above still
+    # contains the decay tail (a single mean cannot remove a time-varying
+    # offset), so quiet room noise before the event is what to compare.
+    pre_ac = pre - pre.mean(axis=1, keepdims=True)
+    pre_rms = np.sqrt((pre_ac ** 2).mean(axis=1))
+    print(f"  pre-clap rms: " +
+          "  ".join(f"mic{m} {pre_rms[m]:.1f}" for m in range(cap.shape[0])) +
+          f"   (spread {pre_rms.max() / max(pre_rms.min(), 1e-9):.2f}x)")
+    if pre_rms.max() / max(pre_rms.min(), 1e-9) > 2.0:
+        print("  WARNING: channels differ by more than 2x on room noise. "
+              "That is a real gain or wiring difference, not clap position.")
+    if max(abs(d) for d in pre_dc) > 500:
+        print("  WARNING: DC is already large before the transient, so this "
+              "is not clap recovery. Check right bit shift and Offset.")
+    print()
+
+
 def per_channel_onset(cap, start, stop):
     """
     Crude independent onset per channel, as a sanity cross check on the
@@ -120,9 +175,12 @@ def per_channel_onset(cap, start, stop):
     do not.
     """
     print("independent threshold onsets (whole samples, rough)")
+    print("  (a louder channel trips a fixed-fraction threshold earlier, so a")
+    print("   spread here with matched GCC-PHAT lags means level, not sync)")
     ref = None
     for m, sig in enumerate(cap):
-        seg = np.abs(sig[start:stop])
+        seg = sig[start:stop]
+        seg = np.abs(seg - seg.mean())          # DC would bias the threshold
         floor = np.median(seg)
         thresh = floor + 0.25 * (seg.max() - floor)
         idx = int(np.argmax(seg > thresh)) + start
@@ -196,6 +254,7 @@ if __name__ == "__main__":
 
     problems = channel_health(cap)
     onset = find_clap(cap)
+    dc_drift(cap, onset)
     start, stop = sync_check(cap, onset)
     print()
     per_channel_onset(cap, start, stop)
