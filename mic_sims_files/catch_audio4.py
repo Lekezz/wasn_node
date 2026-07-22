@@ -1,3 +1,4 @@
+import sys
 import serial
 import wave
 import numpy as np
@@ -9,7 +10,9 @@ import numpy as np
 # We sync on the "WAV4" magic instead of reading a fixed count, so any
 # boot text or partial buffer left in the stream is skipped cleanly.
 
-PORT = "COM4"          # change to your port from Device Manager
+# Port defaults to COM4; override it without editing this file by passing it
+# on the command line, e.g.  python catch_audio4.py COM7
+PORT = sys.argv[1] if len(sys.argv) > 1 else "COM4"
 BAUD = 115200
 SAMPLE_RATE = 16000
 NUM_MICS = 4

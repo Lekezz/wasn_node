@@ -38,6 +38,12 @@
 #define NUM_MICS      4
 #define TOTAL_SAMPLES (SAMPLE_RATE * RECORD_SECS)
 #define DMA_BUF_LEN   2048
+/* Samples thrown away per mic before we start storing. The mics and the
+   DFSDM filters both need a moment after start (turn-on pop, DC step), and
+   at RECORD_SECS 1 there is no room to trim that away offline. Every mic
+   drops the same count from its own stream, so relative alignment between
+   channels is untouched. 4000 samples = 0.25 s at 16 kHz. */
+#define WARMUP_SAMPLES 4000
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -68,6 +74,7 @@ DMA_HandleTypeDef hdma_dfsdm1_flt2;
 int32_t dma_buf[NUM_MICS][DMA_BUF_LEN];
 int16_t recording[NUM_MICS][TOTAL_SAMPLES];
 volatile uint32_t rec_index[NUM_MICS];
+volatile uint32_t warmup_left[NUM_MICS];
 volatile uint8_t half_flag[NUM_MICS], full_flag[NUM_MICS];
 volatile uint8_t recording_active = 0;
 extern UART_HandleTypeDef hcom_uart[];
@@ -99,7 +106,15 @@ static int filter_to_mic(DFSDM_Filter_HandleTypeDef *f)
 //stores samples into per-mic buffer
 static void store_samples(int mic, int32_t *src, uint32_t count)
 {
-    for (uint32_t i = 0; i < count && rec_index[mic] < TOTAL_SAMPLES; i++) {
+    uint32_t i = 0;
+
+    /* burn off this mic's warm-up allowance first */
+    while (i < count && warmup_left[mic] > 0) {
+        warmup_left[mic]--;
+        i++;
+    }
+
+    for (; i < count && rec_index[mic] < TOTAL_SAMPLES; i++) {
         recording[mic][rec_index[mic]++] = (int16_t)(src[i] >> 8);
     }
 }
@@ -194,6 +209,7 @@ int main(void)
 	           from any previous run */
 	        for (int m = 0; m < NUM_MICS; m++) {
 	          rec_index[m] = 0;
+	          warmup_left[m] = WARMUP_SAMPLES;
 	          half_flag[m] = 0;
 	          full_flag[m] = 0;
 	        }
