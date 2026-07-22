@@ -2,8 +2,9 @@
 
 This file holds the story, the open work, and the debugging history that
 explains why things are the way they are. Read together with CLAUDE.md,
-which holds the compact always-true facts. Last updated 2026-07-21
-(warm-up discard, check_sync.py, proposed final geometry).
+which holds the compact always-true facts. Last updated 2026-07-22
+(four-mic capture proven on hardware, geometry moved into a registry,
+active layout 9.25 x 10 cm on two glued breadboards).
 
 ## Where the project stands
 
@@ -18,7 +19,13 @@ Working and proven on hardware:
   It is the reference the firmware port will be validated against.
 - GitHub repo with README and .gitignore.
 
-Written, committed, builds clean, NEVER RUN ON HARDWARE:
+- Four-mic capture, PROVEN ON HARDWARE 2026-07-22. Channel sync verified
+  by clap test: delays 0.000, -0.481, -1.354, -1.801 samples, monotonic
+  across the in-line fixture and linear in mic position to a max residual
+  of 0.131 samples. Reference capture archived in
+  mic_sims_files/captures/2026-07-22-inline-clap/.
+
+Working, committed, and now exercised on hardware:
 - CubeMX four-mic configuration (channels 0,1,3 added, filters 1-3, three
   new DMA requests), plus commit 9f179e1 fixing channel 3 RightBitShift
   to 0x07.
@@ -35,114 +42,110 @@ Written, committed, builds clean, NEVER RUN ON HARDWARE:
   1-sample-per-channel stagger; it recovered +0.000, +1.000, +2.000,
   +3.000 exactly. Never yet run on real data.
 
+- mic_sims_files/array_geometry.py, compare_geometries.py, and
+  localize_capture.py. Geometry registry, layout scoring, and real
+  capture to bearing. localize_capture.py validated against synthetic
+  sources on the active layout: mean 0.99 deg, worst 1.77 deg. Not yet
+  run on a real spaced array, because the array is not built.
+
 Cleared:
-- All four mics are now wired on the temporary in-line fixture (was the
-  blocker). Nothing downstream of that has been exercised yet.
+- All four mics wired, and the four-mic firmware run and verified. Both
+  were blockers.
 
 Not started:
-- Clap sync verification on real data, offline localization, CMSIS-DSP
+- The spaced array itself, offline localization on real data, CMSIS-DSP
   port.
 
-## Current bench array is a temporary in-line fixture
+## The in-line bring-up fixture is RETIRED
 
-The four mics are currently in a straight line on the small breadboard,
-packed about as close as the parts allow. This is a BRING-UP FIXTURE for
-proving all four channels work, not the final array. A larger breadboard
-is coming so the mics can be spaced out properly; the final geometry is
-still to be decided.
+It was four mics in a straight line, packed as tight as the parts allow,
+on the small breadboard. Its only job was proving all four channels work
+and start in sync, and it did that on 2026-07-22. It could never localize:
+at roughly 2 cm pitch the whole aperture spans under 3 samples at 16 kHz,
+so there is no angular resolution to extract, and any direction estimate
+from it is meaningless.
 
-What this means for now:
+That tightness was exactly what made it a good sync test. True acoustic
+delay end to end was under 3 samples, so any channel sitting far off had
+to be a filter sync bug rather than geometry. A spread out array would
+have confounded the two.
 
-- Do NOT touch MIC_POS or estimate_direction() yet. Geometry is
-  irrelevant to the only test this fixture is for (the clap sync check),
-  and any values entered now would just have to be redone.
-- The tight spacing is an advantage for sync checking. At roughly 2 cm
-  pitch the true acoustic delay between adjacent mics is about 58 us, or
-  under one sample at 16 kHz, and under about 3 samples end to end.
-  So all four clap onsets should land essentially on top of each other.
-  Any channel sitting several samples off is a filter sync bug, not
-  geometry, which makes this fixture a cleaner test than a spread out
-  array would be.
-- This fixture cannot do localization. Sub-sample delays across the whole
-  aperture means there is no real angular resolution to extract. Do not
-  read anything into direction estimates from it.
+Its capture and full results are archived in
+mic_sims_files/captures/2026-07-22-inline-clap/. Geometry for the real
+array is covered in the next section.
 
-When the real array is built, before analyzing any capture:
+## Geometry: how it was decided, and why it changed twice
 
-1. Replace MIC_POS with the measured port-to-port positions.
-2. If the final array is also collinear, estimate_direction() will
-   silently return garbage: every baseline vector is parallel, so the
-   least squares matrix is rank 1, the across-axis component of u is
-   unconstrained and comes back near zero, and arctan2 collapses the
-   answer to 0 or 180 deg. A linear array needs the reduced solve
-   (recover the along-axis direction cosine, then arccos) and can only
-   ever give a bearing in a half plane, since sources mirrored across the
-   mic line produce identical delays. A non-collinear layout (the square
-   the sim already assumes, or any triangle plus centre) avoids both
-   problems and is worth preferring if the mounting allows it. Worth
-   raising with Ben before committing to a final geometry.
+The build surface drove this, and it moved twice in one day. Keeping the
+history because it explains why the code is structured the way it is.
 
-## Proposed final geometry: 10 cm square (not yet agreed with Ben)
+1. Original plan: 10 cm square, matching localization_sim.py's validated
+   MIC_POS.
+2. Then: only ONE full-size breadboard was available. That board is about
+   16.5 cm long but only about 2.8 cm across the usable rows, so a 10 cm
+   square does not fit. Best available was a 2.8 x 10 cm rectangle.
+3. Then: two boards were glued together, giving about 9.25 cm of width.
+   A near-square fits again, and that is the current plan.
 
-Recommendation is a 10 cm square, side measured port to port. Spacing is a
-straight trade: wider gives better angular resolution, narrower avoids
-spatial aliasing. Assuming GCC-PHAT with parabolic interpolation resolves
-about 0.2 samples on a real clap:
+The lesson that stuck: geometry changes for physical reasons that have
+nothing to do with the maths, so it was moved out of the scripts into
+mic_sims_files/array_geometry.py. Layouts are named entries in a registry
+with an ACTIVE selection and a per-layout measured flag. Adding a layout
+gets it scored by compare_geometries.py automatically. More layouts are
+expected; nothing below is permanent.
 
-| Side  | Delay across one side | Angle error at broadside | Aliasing above |
-|-------|-----------------------|--------------------------|----------------|
-| 5 cm  | 2.3 samples           | about 4.9 deg            | 3.4 kHz        |
-| 10 cm | 4.7 samples           | about 2.5 deg            | 1.7 kHz        |
-| 15 cm | 7.0 samples           | about 1.6 deg            | 1.1 kHz        |
-| 20 cm | 9.3 samples           | about 1.2 deg            | 860 Hz         |
+Scores from compare_geometries.py, simulation only (36 angles x 3 trials,
+2 m source, 20 dB SNR). No reverberation, no measurement error, and the
+estimator is handed the exact geometry, so these RANK layouts rather than
+predict real accuracy:
 
-The aliasing column is the strict half wavelength bound and is pessimistic
-in practice, since broadband claps plus the max_tau search window keep the
-peak unambiguous well past it. It is still the reason not to go as wide as
-the breadboard allows.
+| Layout                | Aperture | Cond | Mean    | p90     | Worst   |
+|-----------------------|----------|------|---------|---------|---------|
+| 9.25 x 10 cm (ACTIVE) | 13.6 cm  | 1.08 | 1.03deg | 2.09deg | 2.39deg |
+| 9.25 x 12 cm          | 15.2 cm  | 1.30 | 0.70deg | 2.01deg | 2.16deg |
+| 9.25 x 16 cm          | 18.5 cm  | 1.73 | 0.51deg | 1.10deg | 1.42deg |
+| 10 cm square (ref)    | 14.1 cm  | 1.00 | 1.12deg | 2.32deg | 2.43deg |
+| 9.0 cm square         | 12.7 cm  | 1.00 | 1.74deg | 2.83deg | 2.95deg |
+| 2.8 x 10 cm (1 board) | 10.4 cm  | 3.57 | 1.87deg | 7.87deg | 8.43deg |
+| 2.5 cm square         |  3.5 cm  | 1.00 | 6.33deg | 8.60deg | 9.20deg |
 
-10 cm wins for a reason beyond the table: localization_sim.py is already
-validated at exactly that geometry, so the first real capture can be
-compared against a known good simulation result. If it disagrees, that is
-hardware and not math. 15 cm buys under a degree and costs that reference.
-Widening later is a one-line MIC_POS change plus a re-measure.
+Reading the table: mean error alone is misleading. The 2.8 x 10 cm
+single-board rectangle has a decent MEAN (1.87 deg) but a terrible p90
+(7.87 deg), because its error is concentrated in four narrow cones about
+30 deg off the long axis. Condition number predicts this directly, which
+is why the code keys off it: near 1 means uniform accuracy, above about 2
+means blind directions exist.
 
-Far field holds comfortably: a 10 cm aperture with sources at 1 m or more
-is well inside the assumption the model makes.
+Why 9.25 x 10 is ACTIVE rather than the better-scoring 9.25 x 16: every
+layout here is well past the spatial aliasing half-wavelength bound
+(2.1 cm at 8 kHz), and the simulation does not model reverberation, so
+wide apertures look better in sim than they may behave in a real room.
+Build the 10 cm version first, confirm it works, then try 12 and 16 cm
+since changing is now a one-line edit. Far field holds comfortably either
+way: sources at 1 m or more against a 13.6 cm aperture.
 
-Is a square optimal? It is a good choice and clearly right over a line,
-but not uniquely optimal. What matters most is that it is non-collinear,
-which fixes both the rank deficiency in estimate_direction() and the front
-to back ambiguity. The square is also symmetric, so accuracy is uniform in
-angle, and it is the easiest shape to build accurately by counting holes.
-The main alternative is an equilateral triangle with a mic at the centre:
-for the same aperture it gives slightly more uniform coverage and better
-conditioning, because the centre mic forms three baselines from one point
-rather than the square's two redundant parallel pairs. The gain is a few
-tenths of a degree, and it costs the validated reference and is harder to
-lay out on a grid (the triangle height is an irrational multiple of the
-pitch). The square's real limitation, shared with the triangle, is that it
-is planar: bearing in the plane only, and a source above the plane is
+Still true and worth keeping in mind: the array is PLANAR, so it gives
+bearing in the plane only, and a source above the plane is
 indistinguishable from its mirror below. Elevation would need a
-non-planar layout such as a tetrahedron. That planar limitation is the one
-choice that is expensive to undo later, so raise it with Ben first.
+non-planar layout such as a tetrahedron. That is the one limitation that
+is expensive to undo later, so it is worth raising with Ben.
 
-Building it accurately without a PCB: use perfboard as the jig. The 0.1
-inch (2.54 mm) grid is a precision etched fixture, more trustworthy than
-any ruler. 40 holes is 101.6 mm, so a 40 by 40 hole square is 10.16 cm a
-side, repeatable to the board's own etch tolerance. Count holes, do not
-measure. Solder the mics down so they cannot shift, keep all four ports
-coplanar and facing the same way, and label them 0 to 3 physically. Then
-measure port to port with calipers and put the measured numbers in
-MIC_POS. For scale, 1 mm of position error is about 0.047 samples of
-delay error, well under a degree, so 1 mm accuracy is plenty.
-
-Two wiring notes for the spread out version. The CLK net will fan 2.4 MHz
-out to four mics over maybe 40 cm of jumper wire, long enough to ring: put
-33 to 100 ohms in series at the MCU end and run a ground wire alongside
-the clock. And mics 0 and 1 share PE7 while mics 2 and 3 share PB1, so
-place each sharing pair on adjacent corners rather than diagonal ones to
-keep those shared DOUT stubs short.
+Build notes:
+- Count holes along the LONG axis only. The 0.1 inch (2.54 mm) column
+  pitch is exact and uninterrupted, so 10 cm is 39-40 pitches. Do NOT
+  count across the width: the centre channel of each board, the power
+  rails, and the glue seam break the grid. Measure the width.
+- Measure port to port with calipers, not pin to pin. On a breakout board
+  the mic port is offset from the header pins. Put measured numbers in
+  array_geometry.py and set measured=True for that layout; until then
+  localize_capture.py warns that any bearing is provisional.
+- Keep all four ports coplanar and facing the same way. Label the mics
+  physically 0 to 3.
+- The CLK net now fans 2.4 MHz out to four mics over a longer run: put 33
+  to 100 ohms in series at the MCU end and run a ground wire alongside the
+  clock. Mics 0 and 1 share PE7 while mics 2 and 3 share PB1, so place
+  each sharing pair on adjacent corners rather than diagonal ones to keep
+  those shared DOUT stubs short.
 
 ## Reference: the 4-mic user code, as landed in main.c
 
@@ -315,15 +318,22 @@ reshaping. The single-mic "WAV0" version is still there as catch_audio.py.
    that channel. A channel that is alive but tens of samples off is filter
    sync. No offline trimming needed now that the firmware discards the
    warm-up.
-4. Build the real spaced array on the larger breadboard (see the geometry
-   decision below), discuss with Ben, then measure port-to-port and set
-   MIC_POS from the measured numbers, not the nominal ones.
-5. Offline validation: claps from known angles (protractor + tape measure,
-   1 m or more away, source at array height, away from walls), run
-   localization_sim.py's gcc_phat + estimate_direction on capture.npy.
+4. Build the 9.25 x 10 cm array on the glued breadboard pair (see the
+   geometry section below). Count holes along the long axis, measure the
+   width. Then measure port-to-port with calipers, put the numbers in
+   array_geometry.py, and set measured=True for that layout.
+5. Re-run check_sync.py on the spaced array before anything else. The
+   wiring is longer now, so confirm channel sync survived it. Expected
+   delays are larger than the in-line fixture (aperture is 6.4 samples,
+   not 3), so the pass criterion is physical consistency, not near-zero
+   offsets: delays should agree with a plausible source position.
+6. Offline validation: claps from known angles (protractor + tape measure,
+   1 m or more away, source at array height, away from walls), then
+   localize_capture.py --true-angle DEG on each capture. The active
+   layout has no blind directions, so any bearing is fair game.
    Deliverable: estimated vs true angle plot. Expect several degrees of
-   error in the real world; the sim's sub-0.1 deg is the clean-room ceiling.
-6. CMSIS-DSP port: reimplement gcc_phat (arm_rfft_fast_f32) and the least
+   error in the real world; the sim's ~1 deg is the clean-room ceiling.
+7. CMSIS-DSP port: reimplement gcc_phat (arm_rfft_fast_f32) and the least
    squares fusion in C. Validate by feeding identical capture.npy frames
    and comparing delays to Python within a fraction of a sample. Budget
    check from earlier analysis: ~10 ms of FFT work per 32 ms frame at

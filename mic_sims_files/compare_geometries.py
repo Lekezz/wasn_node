@@ -25,39 +25,25 @@ Run:  python compare_geometries.py
 
 import numpy as np
 
+import array_geometry as geom
 import localization_sim as ls
 
 FS = ls.FS
 C_SOUND = ls.C_SOUND
 
-# Candidate layouts, all in metres, (x, y) per mic.
-# "fits" describes the mounting surface each one needs.
-CANDIDATES = {}
+# Every layout registered in array_geometry.py, so adding one there gets it
+# scored here automatically. Extra one-off candidates can go in EXTRAS
+# without cluttering the real registry.
+CANDIDATES = {name: (spec["positions"], spec["note"])
+              for name, spec in geom.LAYOUTS.items()}
 
-
-def square(side):
-    h = side / 2.0
-    return np.array([[h, h], [-h, h], [-h, -h], [h, -h]])
-
-
-def rect(width, height):
-    w, h = width / 2.0, height / 2.0
-    return np.array([[w, h], [-w, h], [-w, -h], [w, -h]])
-
-
-CANDIDATES["10 cm square (validated reference)"] = (
-    square(0.10), "needs a separate flat substrate, will not fit a breadboard")
-CANDIDATES["2.5 cm square"] = (
-    square(0.025), "fits one breadboard, very tight")
-CANDIDATES["2.8 x 10 cm rectangle"] = (
-    rect(0.10, 0.028), "fits one full-size breadboard")
-CANDIDATES["2.8 x 15 cm rectangle"] = (
-    rect(0.15, 0.028), "fits one full-size breadboard, near full length")
-CANDIDATES["5 cm square"] = (
-    square(0.05), "needs two breadboards clipped together, or a substrate")
-CANDIDATES["10 cm L-shape"] = (
-    np.array([[0.0, 0.0], [0.10, 0.0], [0.0, 0.10], [0.05, 0.05]]),
-    "needs a separate flat substrate")
+EXTRAS = {
+    "9.0 cm square": (geom.rect(0.090, 0.090),
+                      "square that fits the glued pair, for comparison"),
+    "2.5 cm square": (geom.rect(0.025, 0.025),
+                      "what a single board allowed in both axes"),
+}
+CANDIDATES.update(EXTRAS)
 
 
 def score(mic_pos, n_angles=36, trials_per_angle=3, snr_db=20.0):
@@ -112,34 +98,42 @@ if __name__ == "__main__":
         print(f"{name:<32} {ap_m*100:8.1f}cm {ap_samp:8.2f} "
               f"{mean:6.2f}d {med:6.2f}d {p90:6.2f}d {worst:7.2f}d")
 
-    print("\nmounting requirement")
+    print("\nnotes")
     for (name, *_ , fits) in rows:
         print(f"  {name:<32} {fits}")
 
-    # Anisotropy check: a long thin rectangle should be much better at some
-    # angles than others. Report error split by whether the source is near
-    # the long axis (endfire) or perpendicular to it (broadside).
-    print("\nanisotropy: mean error broadside vs endfire (long-axis layouts)")
-    for name in ("2.8 x 10 cm rectangle", "2.8 x 15 cm rectangle",
-                 "10 cm square (validated reference)"):
-        pos = CANDIDATES[name][0]
-        saved = (ls.MIC_POS, ls.NUM_MICS, ls.PAIRS)
-        try:
-            ls.MIC_POS = pos
-            ls.NUM_MICS = len(pos)
-            ls.PAIRS = [(i, j) for i in range(4) for j in range(i + 1, 4)]
-            broad, end, seed = [], [], 1000
-            for ang in (75, 90, 105, 255, 270, 285):      # near +/- y
-                for _ in range(3):
-                    broad.append(abs(ls.run_trial(ang, seed=seed,
-                                                  verbose=False)))
-                    seed += 1
-            for ang in (0, 15, 345, 165, 180, 195):       # near +/- x
-                for _ in range(3):
-                    end.append(abs(ls.run_trial(ang, seed=seed,
-                                                verbose=False)))
-                    seed += 1
-            print(f"  {name:<32} broadside {np.mean(broad):6.2f} deg   "
-                  f"endfire {np.mean(end):6.2f} deg")
-        finally:
-            ls.MIC_POS, ls.NUM_MICS, ls.PAIRS = saved
+    # Blind direction check on the ACTIVE layout. A near-square array
+    # (condition number close to 1) should have no direction that is much
+    # worse than the rest; a long thin one will. This is the check that
+    # decides whether validation claps need to avoid certain bearings.
+    pos = geom.active_positions()
+    d = geom.describe(pos)
+    print(f"\nblind direction check on ACTIVE layout ({geom.ACTIVE}, "
+          f"condition number {d['cond']:.2f})")
+    saved = (ls.MIC_POS, ls.NUM_MICS, ls.PAIRS)
+    try:
+        ls.MIC_POS = pos
+        ls.NUM_MICS = len(pos)
+        ls.PAIRS = [(i, j) for i in range(ls.NUM_MICS)
+                    for j in range(i + 1, ls.NUM_MICS)]
+        per_angle, seed = [], 2000
+        for ang in range(0, 360, 15):
+            errs = [abs(ls.run_trial(ang, seed=seed + k, verbose=False))
+                    for k in range(4)]
+            seed += 4
+            per_angle.append((float(np.mean(errs)), ang))
+        per_angle.sort(reverse=True)
+        best = per_angle[-1]
+        print("  worst 4 directions: " +
+              ", ".join(f"{a} deg = {m:.2f}" for m, a in per_angle[:4]))
+        print(f"  best direction:     {best[1]} deg = {best[0]:.2f}")
+        spread = per_angle[0][0] / max(best[0], 1e-6)
+        if per_angle[0][0] < 3.0:
+            print("  VERDICT: no blind directions. Validation claps can be "
+                  "taken from any bearing.")
+        else:
+            print(f"  VERDICT: worst direction is {per_angle[0][0]:.1f} deg "
+                  f"({spread:.0f}x the best). Avoid those bearings when "
+                  f"planning validation claps.")
+    finally:
+        ls.MIC_POS, ls.NUM_MICS, ls.PAIRS = saved

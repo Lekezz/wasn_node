@@ -62,37 +62,55 @@ Supervisor: Ben. Owner: Leke (undergrad EE). Reference design: SpeechCompass
 
 ## Array geometry
 
-Current bench setup is a TEMPORARY in-line fixture: four mics in a
-straight line, packed tight on the small breadboard, for four-channel
-bring-up only. A larger breadboard is coming; final geometry is TBD.
-localization_sim.py still holds the default 10 cm square MIC_POS.
+Geometry lives in mic_sims_files/array_geometry.py, NOT hardcoded in the
+analysis scripts. Changing layout means editing ACTIVE there. Layouts are
+expected to change: treat any specific dimension below as current, not
+permanent.
 
-- Leave MIC_POS and estimate_direction() alone until the real array
-  exists. The bring-up fixture only needs the clap sync check, which does
-  not depend on geometry.
-- The fixture cannot localize. At ~2 cm pitch the whole aperture spans
-  under about 3 samples at 16 kHz, so there is no angular resolution to
-  extract. That same tightness makes it a good sync test: all four clap
-  onsets should coincide, so any channel off by several samples is a
-  filter sync bug rather than geometry.
-- When the real array is built, set MIC_POS from measured port-to-port
-  positions before analyzing any capture.
-- Prefer a non-collinear final layout. A straight line cannot resolve
-  front from back (sources mirrored across the mic line give identical
-  delays, so bearing is only recoverable in a half plane), and it breaks
-  estimate_direction() as written: parallel baselines make the least
+Build surface as of 2026-07-22: TWO full-size breadboards glued together.
+Usable area is about 16 cm along the long axis (63 columns) by about
+9.25 cm across (10 rows plus rails, both boards).
+
+Current ACTIVE layout: 9.25x10-nominal, a 10 x 9.25 cm near-square.
+Condition number 1.08, no blind directions, sim mean error about 1.0 deg.
+Registry also holds 9.25x12 and 9.25x16 (better accuracy, more aliasing
+risk) and the superseded single-board 2.8x10.
+
+- Count holes along the LONG axis only: the 0.1 inch (2.54 mm) column
+  pitch is exact and uninterrupted, so 10 cm is 39-40 pitches. Do NOT
+  count across the WIDTH. The centre channel of each board, the power
+  rails, and the glue seam all break the grid there, so width must be
+  measured.
+- Final numbers must come from calipers on the mic PORTS, not header
+  pins: the port is offset from the pins on a breakout board. Put the
+  measured numbers in array_geometry.py and set measured=True for that
+  layout. 1 mm of error is about 0.047 samples, well under a degree.
+- Non-collinear is the property that matters most, more than exact
+  dimensions. A straight line cannot resolve front from back (sources
+  mirrored across the mic line give identical delays) and it breaks
+  estimate_direction() outright: parallel baselines make the least
   squares matrix rank 1, the across-axis component of u comes back ~0,
-  and the reported angle collapses to 0 or 180 regardless of truth. A
-  linear array would need the reduced 1D solve (direction cosine, then
-  arccos).
-- For a linear layout, angular sensitivity is best broadside (source
-  perpendicular to the mic line) and worst at endfire, since the delay
-  derivative goes as sin of the angle off axis. Aim test claps broadside.
+  and the angle collapses to 0 or 180 regardless of truth. array_geometry
+  .describe() reports rank; localize_capture.py hard-fails on rank 1.
+- Condition number is the blind-direction test. Near 1 means accuracy is
+  uniform in all directions. Above about 2 means narrow bearings where
+  error blows up: the superseded 2.8x10 single-board rectangle had four
+  such cones roughly 30 deg off the long axis, reaching 8 deg error.
+  localize_capture.py derives POOR_CONES from the condition number, so
+  this stays correct automatically when the layout changes.
+- localization_sim.py keeps its own 10 cm square MIC_POS and must NOT be
+  repointed at the active layout. It is the validated reference the
+  CMSIS-DSP port gets compared against. compare_geometries.py and
+  localize_capture.py swap geometry in temporarily and restore it.
 - Spatial aliasing bound: at FS 16 kHz, Nyquist 8 kHz gives a half
-  wavelength of about 2.1 cm. Wider spacing than that can produce
-  ambiguous correlation peaks at high frequency. Broadband claps plus
-  the max_tau search window make GCC-PHAT tolerant well past this in
-  practice, but wide spacing trades aliasing risk for resolution.
+  wavelength of about 2.1 cm. Every layout here is well past that.
+  Broadband claps plus the max_tau search window make GCC-PHAT tolerant
+  of it in practice, but the simulation does not model reverberation, so
+  wider apertures look better in sim than they may behave in a real room.
+  This is the reason to build 10 cm first and try 16 cm after.
+- The in-line bring-up fixture is RETIRED. It proved channel sync and
+  could not localize (aperture under 3 samples). Its capture and results
+  are archived in mic_sims_files/captures/2026-07-22-inline-clap/.
 
 ## Repo layout
 
@@ -104,6 +122,15 @@ localization_sim.py still holds the default 10 cm square MIC_POS.
   health, clap onset, GCC-PHAT lag of each channel vs mic0. Geometry free
   on purpose; imports gcc_phat from localization_sim.py so the bring-up
   test and the reference implementation cannot drift apart.
+- mic_sims_files/array_geometry.py  named array layouts + ACTIVE selection,
+  measured flags, and describe() for rank/condition/aperture. Single source
+  of truth for geometry; edit ACTIVE to try a different layout.
+- mic_sims_files/compare_geometries.py  scores every registered layout
+  through the reference estimator, plus a blind-direction check on ACTIVE.
+- mic_sims_files/localize_capture.py  real capture -> bearing. Milestone 5
+  deliverable. Hard-fails on a collinear array, warns on high condition
+  number, flags pair delays exceeding physics, warns while the active
+  layout is unmeasured. Validated on synthetic sources: mean 0.99 deg.
 - mic_sims_files/localization_sim.py  GCC-PHAT reference implementation,
   verified (delay bias < 0.001 samples, angle error < 0.1 deg in
   simulation, for the square geometry). The embedded port must match this

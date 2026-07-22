@@ -20,51 +20,23 @@ import sys
 
 import numpy as np
 
+import array_geometry as geom
 import localization_sim as ls
 
 FS = ls.FS
 C_SOUND = ls.C_SOUND
 
-# ---------------------------------------------------------------------------
-# ARRAY GEOMETRY - MUST BE MEASURED BEFORE ANY RESULT HERE IS MEANINGFUL
-# ---------------------------------------------------------------------------
-#
-# Planned layout: 2.8 x 10 cm rectangle on one full-size (830 point)
-# breadboard. The 2.8 cm is the row A to row J span across the centre
-# channel (1.1 inch); the 10 cm is 40 hole pitches along the board
-# (40 x 2.54 mm = 10.16 cm).
-#
-#   +y
-#    ^     mic1 .              . mic0      row A
-#    |
-#    +---> +x   (long axis of the breadboard)
-#
-#          mic2 .              . mic3      row J
-#
-# Numbers below are NOMINAL, from counting holes. They are NOT measured.
-# The mic PORT is offset from the header pins on a breakout board, so pin
-# spacing is not port spacing. Measure port to port with calipers, put the
-# real numbers here, and set ARRAY_MEASURED = True.
-#
-# For scale: 1 mm of position error is about 0.047 samples of delay error,
-# which is well under a degree, so +/- 1 mm is good enough.
+# Geometry comes from array_geometry.py so that trying a different array
+# layout is a one-line change there, not an edit to this file.
+MIC_POS = geom.active_positions()
+ARRAY_MEASURED = geom.is_measured()
 
-ARRAY_MEASURED = False          # <-- flip to True once you measure
-
-HALF_X = 0.1016 / 2             # nominal 40 hole pitches
-HALF_Y = 0.0279 / 2             # nominal row A to row J, 1.1 inch
-
-MIC_POS = np.array([
-    [ HALF_X,  HALF_Y],   # mic0
-    [-HALF_X,  HALF_Y],   # mic1
-    [-HALF_X, -HALF_Y],   # mic2
-    [ HALF_X, -HALF_Y],   # mic3
-])
-
-# Source directions where this layout is known to be unreliable, from the
-# simulation sweep in compare_geometries.py: roughly 30 degrees off the
-# long axis, four narrow cones. Bearings landing in these get a warning.
-POOR_CONES = [30, 150, 210, 330]
+# Directions where the ACTIVE layout is unreliable. Near-square layouts
+# (condition number close to 1) have none, so this is normally empty. The
+# superseded 2.8 x 10 cm single-board rectangle had four, roughly 30 deg
+# off the long axis, which is what this machinery was built for. A high
+# condition number is the signal that blind cones exist at all.
+POOR_CONES = [30, 150, 210, 330] if geom.describe(MIC_POS)["cond"] > 2.0 else []
 POOR_HALF_WIDTH = 10            # degrees either side
 
 WINDOW_BEFORE = 256
@@ -93,33 +65,30 @@ def check_geometry(mic_pos):
     collapses to 0 or 180 regardless of truth. Better to say so than to
     print a plausible looking number.
     """
-    pairs = [(i, j) for i in range(len(mic_pos))
-             for j in range(i + 1, len(mic_pos))]
-    A = np.array([mic_pos[i] - mic_pos[j] for (i, j) in pairs])
-    rank = np.linalg.matrix_rank(A)
-    s = np.linalg.svd(A, compute_uv=False)
-    cond = s[0] / s[1] if len(s) > 1 and s[1] > 1e-12 else np.inf
+    d = geom.describe(mic_pos)
+    rank, cond = d["rank"], d["cond"]
 
-    print("array geometry")
+    print(f"array geometry: {geom.ACTIVE}")
     for m, p in enumerate(mic_pos):
         print(f"  mic{m}: x {p[0]*100:+7.2f} cm   y {p[1]*100:+7.2f} cm")
-    span_x = mic_pos[:, 0].max() - mic_pos[:, 0].min()
-    span_y = mic_pos[:, 1].max() - mic_pos[:, 1].min()
-    print(f"  span {span_x*100:.2f} x {span_y*100:.2f} cm, "
-          f"rank {rank} of 2, condition number {cond:.1f}")
+    print(f"  span {d['span_x']*100:.2f} x {d['span_y']*100:.2f} cm, "
+          f"aperture {d['aperture_m']*100:.1f} cm "
+          f"({d['aperture_samples']:.1f} samples), "
+          f"rank {rank} of 2, condition number {cond:.2f}")
 
     if rank < 2:
         print("  ERROR: the array is collinear. estimate_direction() cannot")
         print("  resolve the across-axis component and its output will be")
         print("  meaningless. Build a non-collinear array first.")
         return False
-    if cond > 10:
-        print(f"  WARNING: condition number {cond:.1f} is high. Accuracy will")
-        print("  be strongly direction dependent.")
+    if cond > 2.0:
+        print(f"  WARNING: condition number {cond:.2f} is high. Accuracy will")
+        print("  be strongly direction dependent, with blind directions.")
     if not ARRAY_MEASURED:
-        print("  WARNING: ARRAY_MEASURED is False, so these positions are")
-        print("  nominal hole counts, not measured. Any bearing below is")
-        print("  provisional. Measure port to port and update MIC_POS.")
+        print("  WARNING: this layout is not marked as measured, so the")
+        print("  positions are nominal. Any bearing below is provisional.")
+        print("  Measure port to port with calipers, put the numbers in")
+        print("  array_geometry.py, and set measured=True for this layout.")
     print()
     return True
 
