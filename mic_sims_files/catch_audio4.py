@@ -1,4 +1,7 @@
 import argparse
+import glob
+import os
+import re
 import serial
 import wave
 import numpy as np
@@ -11,21 +14,30 @@ import numpy as np
 # boot text or partial buffer left in the stream is skipped cleanly.
 
 parser = argparse.ArgumentParser(
-    description="Capture one 4-channel recording from the board over serial.")
+    description="Capture 4-channel recordings from the board over serial.")
 parser.add_argument("port", nargs="?", default="COM4",
                     help="serial port (default COM4), e.g. COM7")
 parser.add_argument("--tag", default=None,
                     help="filename prefix so a run does not overwrite the "
-                         "last. Use it during an angle sweep, e.g. "
-                         "--tag angle090 writes angle090_mic0.wav.. and "
-                         "angle090_capture.npy. Without it, files are the "
-                         "old mic0.wav.. and capture.npy (overwritten each "
-                         "run).")
+                         "last. During an angle sweep use the true angle, "
+                         "e.g. --tag angle090. Files are then named per "
+                         "trial: angle090_trial1_capture.npy and so on. "
+                         "Without --tag, files are the old mic0.wav.. and "
+                         "capture.npy, overwritten each run.")
+parser.add_argument("--trials", type=int, default=1,
+                    help="how many recordings to take in a row at this angle "
+                         "(default 1). Each one waits for its own button "
+                         "press. Trial numbers continue past any files "
+                         "already saved for this tag, so you can also just "
+                         "rerun the command to add more.")
 args = parser.parse_args()
 
+if args.trials < 1:
+    parser.error("--trials must be at least 1")
+if args.trials > 1 and not args.tag:
+    parser.error("--trials needs --tag so the recordings get distinct names")
+
 PORT = args.port
-# Prefix for every output filename. Empty string reproduces the old names.
-PREFIX = f"{args.tag}_" if args.tag else ""
 BAUD = 115200
 SAMPLE_RATE = 16000
 NUM_MICS = 4
@@ -62,51 +74,92 @@ def sync_to_magic(port, magic):
             return True
 
 
-ser.reset_input_buffer()         # throw away the welcome message etc.
-print("Ready. Press the blue button on the board now...")
+def next_trial_number(tag):
+    """
+    First unused trial index for this tag, so separate runs keep adding
+    instead of overwriting. Scans existing <tag>_trial<K>_capture.npy.
+    """
+    highest = 0
+    for path in glob.glob(f"{tag}_trial*_capture.npy"):
+        m = re.search(rf"{re.escape(tag)}_trial(\d+)_capture\.npy$",
+                      os.path.basename(path))
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return highest + 1
 
-if not sync_to_magic(ser, MAGIC):
-    print("Never saw the WAV4 header. Did the recording finish? Try again.")
-    ser.close()
-    raise SystemExit(1)
 
-length_bytes = read_exact(ser, 4)
-if len(length_bytes) < 4:
-    print("Short read on the length field. Try again.")
-    ser.close()
-    raise SystemExit(1)
+def capture_once(prefix):
+    """
+    Wait for one button press, read the four channels, save them.
+    Returns the (NUM_MICS, nsamples) array, or None on any read failure.
+    """
+    ser.reset_input_buffer()     # drop boot text / stale bytes; idle = nothing
+    print("Ready. Press the blue button on the board now...")
 
-nbytes = int.from_bytes(length_bytes, "little")   # per-channel byte count
-nsamples = nbytes // 2
-print(f"Header OK. Expecting {NUM_MICS} channels of {nbytes} bytes "
-      f"({nsamples} samples each).")
+    if not sync_to_magic(ser, MAGIC):
+        print("Never saw the WAV4 header. Did the recording finish?")
+        return None
 
-channels = []
-for m in range(NUM_MICS):
-    data = read_exact(ser, nbytes)
-    if len(data) < nbytes:
-        print(f"Short read on mic{m}: got {len(data)} of {nbytes} bytes. "
-              f"Try again.")
+    length_bytes = read_exact(ser, 4)
+    if len(length_bytes) < 4:
+        print("Short read on the length field.")
+        return None
+
+    nbytes = int.from_bytes(length_bytes, "little")   # per-channel byte count
+    nsamples = nbytes // 2
+    print(f"Header OK. {NUM_MICS} channels of {nbytes} bytes "
+          f"({nsamples} samples each).")
+
+    channels = []
+    for m in range(NUM_MICS):
+        data = read_exact(ser, nbytes)
+        if len(data) < nbytes:
+            print(f"Short read on mic{m}: got {len(data)} of {nbytes} bytes.")
+            return None
+        channels.append(np.frombuffer(data, dtype="<i2"))   # LE int16
+
+        wav_name = f"{prefix}mic{m}.wav"
+        with wave.open(wav_name, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SAMPLE_RATE)
+            w.writeframes(data)
+
+    cap = np.stack(channels, axis=0)
+    npy_name = f"{prefix}capture.npy"
+    np.save(npy_name, cap)
+
+    # Quick quality hint so a dud trial gets caught now, not at plot time.
+    peak = int(np.max(np.abs(cap)))
+    if peak >= 32700:
+        note = "  WARNING: clipped, clap softer or further"
+    elif peak < 2000:
+        note = "  WARNING: very quiet, clap harder or closer"
+    else:
+        note = ""
+    print(f"Saved {npy_name} (peak {peak} of 32767){note}")
+    return cap
+
+
+if args.tag:
+    start = next_trial_number(args.tag)
+    saved = 0
+    for i in range(args.trials):
+        k = start + i
+        print(f"\n=== {args.tag}  trial {k}  ({i + 1} of {args.trials}) ===")
+        if capture_once(f"{args.tag}_trial{k}_") is None:
+            print("Stopping this angle. Rerun to continue from where it left "
+                  "off.")
+            break
+        saved += 1
+    print(f"\nDone. Saved {saved} trial(s) for {args.tag}.")
+    if saved:
+        print("When the whole sweep is done, plot it with: "
+              "python plot_validation.py")
+else:
+    # Legacy single capture: mic0.wav.. and capture.npy, overwritten.
+    if capture_once("") is None:
         ser.close()
         raise SystemExit(1)
-    samples = np.frombuffer(data, dtype="<i2")    # little-endian int16
-    channels.append(samples)
-
-    wav_name = f"{PREFIX}mic{m}.wav"
-    with wave.open(wav_name, "wb") as w:
-        w.setnchannels(1)        # mono, one file per mic
-        w.setsampwidth(2)        # 16-bit
-        w.setframerate(SAMPLE_RATE)
-        w.writeframes(data)
-    print(f"Saved {wav_name}")
-
-# Stack into a (NUM_MICS, nsamples) array for the localization code.
-capture = np.stack(channels, axis=0)
-npy_name = f"{PREFIX}capture.npy"
-np.save(npy_name, capture)
-print(f"Saved {npy_name} with shape {capture.shape}")
-if PREFIX:
-    print(f"Localize it with:  python localize_capture.py {npy_name} "
-          f"--true-angle <deg>")
 
 ser.close()
