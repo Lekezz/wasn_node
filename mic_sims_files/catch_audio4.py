@@ -1,4 +1,4 @@
-import sys
+import argparse
 import serial
 import wave
 import numpy as np
@@ -10,9 +10,22 @@ import numpy as np
 # We sync on the "WAV4" magic instead of reading a fixed count, so any
 # boot text or partial buffer left in the stream is skipped cleanly.
 
-# Port defaults to COM4; override it without editing this file by passing it
-# on the command line, e.g.  python catch_audio4.py COM7
-PORT = sys.argv[1] if len(sys.argv) > 1 else "COM4"
+parser = argparse.ArgumentParser(
+    description="Capture one 4-channel recording from the board over serial.")
+parser.add_argument("port", nargs="?", default="COM4",
+                    help="serial port (default COM4), e.g. COM7")
+parser.add_argument("--tag", default=None,
+                    help="filename prefix so a run does not overwrite the "
+                         "last. Use it during an angle sweep, e.g. "
+                         "--tag angle090 writes angle090_mic0.wav.. and "
+                         "angle090_capture.npy. Without it, files are the "
+                         "old mic0.wav.. and capture.npy (overwritten each "
+                         "run).")
+args = parser.parse_args()
+
+PORT = args.port
+# Prefix for every output filename. Empty string reproduces the old names.
+PREFIX = f"{args.tag}_" if args.tag else ""
 BAUD = 115200
 SAMPLE_RATE = 16000
 NUM_MICS = 4
@@ -79,16 +92,21 @@ for m in range(NUM_MICS):
     samples = np.frombuffer(data, dtype="<i2")    # little-endian int16
     channels.append(samples)
 
-    with wave.open(f"mic{m}.wav", "wb") as w:
+    wav_name = f"{PREFIX}mic{m}.wav"
+    with wave.open(wav_name, "wb") as w:
         w.setnchannels(1)        # mono, one file per mic
         w.setsampwidth(2)        # 16-bit
         w.setframerate(SAMPLE_RATE)
         w.writeframes(data)
-    print(f"Saved mic{m}.wav")
+    print(f"Saved {wav_name}")
 
 # Stack into a (NUM_MICS, nsamples) array for the localization code.
 capture = np.stack(channels, axis=0)
-np.save("capture.npy", capture)
-print(f"Saved capture.npy with shape {capture.shape}")
+npy_name = f"{PREFIX}capture.npy"
+np.save(npy_name, capture)
+print(f"Saved {npy_name} with shape {capture.shape}")
+if PREFIX:
+    print(f"Localize it with:  python localize_capture.py {npy_name} "
+          f"--true-angle <deg>")
 
 ser.close()
