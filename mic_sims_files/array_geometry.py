@@ -12,13 +12,26 @@ should stay fixed.
 
 Coordinates are metres, (x, y) per mic, in mic order 0..3.
 
-    +y
-     ^   mic1 .          . mic0
-     |
-     +---> +x   (long axis of the breadboard pair)
-         mic2 .          . mic3
+The mic labelling matches the physical build: mic0 top-left, mic1
+top-right, mic2 bottom-left, mic3 bottom-right, with +x pointing right and
++y pointing up.
 
-Bearings reported elsewhere are degrees counterclockwise from +x.
+    +y
+     ^   mic0 .          . mic1     (top)
+     |
+     +---> +x
+         mic2 .          . mic3     (bottom)
+
+Bearings reported elsewhere are degrees counterclockwise from +x, so 0 deg
+is off the right edge (toward mic1/mic3), 90 deg is off the top edge
+(toward mic0/mic1), 180 deg is off the left edge.
+
+This order is not cosmetic. The firmware always emits the four channels as
+mic0, mic1, mic2, mic3, and every script assigns MIC_POS[m] to channel m,
+so the row order here MUST match how the mics are physically wired: the mic
+you place at top-left must be the one wired as channel 0 (PE7, SEL=GND, per
+the mic map in CLAUDE.md). Get this wrong and bearings come out reflected
+even though every delay is correct.
 
 BUILD NOTE, and this one matters: along the LONG axis you can count holes,
 because the 0.1 inch (2.54 mm) column pitch is exact and uninterrupted.
@@ -40,13 +53,20 @@ FS = 16000
 
 
 def rect(width_x, height_y):
-    """Four mics at the corners of a rectangle centred on the origin."""
+    """
+    Four mics at the corners of a rectangle centred on the origin, in the
+    physical labelling mic0 top-left, mic1 top-right, mic2 bottom-left,
+    mic3 bottom-right (+x right, +y up).
+
+    width_x  is the left-to-right span (mic0<->mic1 and mic2<->mic3).
+    height_y is the top-to-bottom span (mic0<->mic2 and mic1<->mic3).
+    """
     w, h = width_x / 2.0, height_y / 2.0
     return np.array([
-        [ w,  h],   # mic0
-        [-w,  h],   # mic1
-        [-w, -h],   # mic2
-        [ w, -h],   # mic3
+        [-w,  h],   # mic0 top-left
+        [ w,  h],   # mic1 top-right
+        [-w, -h],   # mic2 bottom-left
+        [ w, -h],   # mic3 bottom-right
     ])
 
 
@@ -56,7 +76,21 @@ def rect(width_x, height_y):
 #   positions : metres
 #   measured  : True only once the numbers came off calipers
 #   note      : what it needs and what it is for
+# Measured dimensions of the built array. Left-to-right span and
+# top-to-bottom span, in metres. Edit these two numbers if you re-measure
+# or re-space the array; everything downstream follows.
+BUILT_WIDTH_X = 0.0925    # 9.25 cm, mic0<->mic1 (measured with calipers)
+BUILT_HEIGHT_Y = 0.099    # 9.90 cm, mic0<->mic2 (measured with calipers)
+
 LAYOUTS = {
+    "9.25x9.9-measured": {
+        "positions": rect(BUILT_WIDTH_X, BUILT_HEIGHT_Y),
+        "measured": True,
+        "note": "THE BUILT ARRAY. 9.25 cm wide x 9.9 cm tall, mics measured "
+                "port to port with calipers. mic0 top-left, mic1 top-right, "
+                "mic2 bottom-left, mic3 bottom-right. Near-square, no blind "
+                "directions.",
+    },
     "9.25x10-nominal": {
         "positions": rect(0.100, 0.0925),
         "measured": False,
@@ -95,7 +129,7 @@ LAYOUTS = {
 }
 
 # Which layout the analysis scripts should use.
-ACTIVE = "9.25x10-nominal"
+ACTIVE = "9.25x9.9-measured"
 
 
 def active_positions():

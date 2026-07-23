@@ -71,10 +71,17 @@ Build surface as of 2026-07-22: TWO full-size breadboards glued together.
 Usable area is about 16 cm along the long axis (63 columns) by about
 9.25 cm across (10 rows plus rails, both boards).
 
-Current ACTIVE layout: 9.25x10-nominal, a 10 x 9.25 cm near-square.
-Condition number 1.08, no blind directions, sim mean error about 1.0 deg.
-Registry also holds 9.25x12 and 9.25x16 (better accuracy, more aliasing
-risk) and the superseded single-board 2.8x10.
+Current ACTIVE layout: 9.25x9.9-measured, the BUILT array, 9.25 cm wide
+x 9.9 cm tall, measured with calipers (measured=True). mic0 top-left,
+mic1 top-right, mic2 bottom-left, mic3 bottom-right, +x right, +y up.
+Condition number 1.07, no blind directions, sim mean error about 0.8 deg.
+Edit BUILT_WIDTH_X / BUILT_HEIGHT_Y in array_geometry.py if re-measured.
+Registry also holds nominal 9.25x10/12/16 and the superseded 2.8x10.
+
+The mic row order in array_geometry.py MUST match the physical wiring:
+the mic placed top-left is wired as channel 0 (PE7, SEL=GND). The firmware
+always emits channels in order mic0..mic3, so a mislabelled corner
+reflects the bearing even when every delay is right.
 
 - Count holes along the LONG axis only: the 0.1 inch (2.54 mm) column
   pitch is exact and uninterrupted, so 10 cm is 39-40 pitches. Do NOT
