@@ -45,6 +45,16 @@ WINDOW_AFTER = 1792
 
 def find_clap(cap):
     """Same transient locator check_sync.py uses, so both agree."""
+    # Remove each channel's DC before building the envelope. The DFSDM output
+    # carries a large offset (hundreds of counts) that decays for the whole
+    # second after the clap, and np.median(env) below reads that offset as if
+    # it were room noise. On the first ground-truthed capture the offsets
+    # summed to 3633 against a measured floor of 3268, so the reported SNR was
+    # essentially a measure of DC and warned "weak transient" on a clap that
+    # was 60 dB over the real noise. The onset walk-back is threshold based
+    # and moves too. Acoustic noise is what we want to compare against, so
+    # take the offset out first.
+    cap = cap - cap.mean(axis=1, keepdims=True)
     env = np.sum(np.abs(cap), axis=0)
     peak = int(np.argmax(env))
     noise = np.median(env)

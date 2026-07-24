@@ -12,15 +12,17 @@ It answers three questions, in order:
   2. Where is the clap? It finds the loudest transient and cuts a short
      window around it, so the delay math only sees the event and not a
      second of room noise.
-  3. Are the four channels sample aligned? On the temporary in-line
-     fixture the mics sit roughly 2 cm apart, so the true acoustic delay
-     across the whole array is under about 3 samples at 16 kHz. Every
-     channel should therefore land within a couple of samples of mic0.
-     A channel sitting far off is a filter sync bug, not geometry.
+  3. Are the four channels sample aligned? The true acoustic delay
+     between any two mics cannot exceed the array aperture divided by the
+     speed of sound, whatever direction the clap came from. Every channel
+     should therefore land within that bound of mic0, plus a little slack.
+     A channel sitting far outside it is a filter sync bug, not geometry.
 
-This script is deliberately geometry free. It does not touch MIC_POS and
-does not try to estimate a direction, because the bring-up fixture has no
-usable angular resolution.
+This script does not estimate a direction, and it does not care where the
+clap came from. It reads the ACTIVE layout for one number only, the
+aperture, to know what delay physics permits before calling a channel
+broken. Sizing that bound by hand is how the old 5.0 sample constant
+ended up too tight for the built array (see SYNC_TOLERANCE below).
 
 Run:  python check_sync.py [capture.npy]
 """
@@ -29,20 +31,35 @@ import sys
 
 import numpy as np
 
+import array_geometry as geom
 from localization_sim import gcc_phat
 
 FS = 16000
 
 # How far the correlation search is allowed to look, in samples. Much wider
-# than any real delay on this fixture (about 3 samples end to end), so a
-# broken channel can show its true offset instead of being clipped to the
-# edge of a tight window.
+# than any real delay on the array, so a broken channel can show its true
+# offset instead of being clipped to the edge of a tight window.
 MAX_LAG_SEARCH = 32
 
-# Pass/fail line for the sync check, in samples. 3 samples is the physical
-# aperture of the in-line fixture, and 2 more samples of slack covers
-# correlation noise on a single clap.
-SYNC_TOLERANCE = 5.0
+# Pass/fail line for the sync check, in samples.
+#
+# The largest delay physics allows between any two mics is the array aperture
+# (the widest mic-to-mic distance) divided by the speed of sound. A source on
+# that axis produces exactly that delay with the channels perfectly synced, so
+# the tolerance has to clear it or the check fails correct hardware.
+#
+# This used to be hardcoded at 5.0, sized for the retired in-line fixture whose
+# aperture was about 3 samples. On the built 9.25 x 9.9 cm array the diagonal
+# is about 6.3 samples, so a clap near a diagonal would have tripped a FAIL on
+# a perfectly synced array. Deriving it from the ACTIVE layout keeps the check
+# honest when the geometry changes, the same way localize_capture.py derives
+# POOR_CONES from the condition number.
+#
+# SYNC_SLACK covers correlation noise on a single clap, and reverberation
+# pulling the peak slightly off the direct path.
+SYNC_SLACK = 2.0
+APERTURE_SAMPLES = geom.describe(geom.active_positions())["aperture_samples"]
+SYNC_TOLERANCE = APERTURE_SAMPLES + SYNC_SLACK
 
 # Window cut around the clap for the delay math, in samples.
 WINDOW_BEFORE = 256
@@ -102,7 +119,14 @@ def find_clap(cap):
     Locate the transient. Uses the summed absolute value across all four
     channels so one weak mic cannot drag the window off the event, then
     walks back to where the energy first rises above the noise floor.
+
+    DC is removed per channel first, for the reason documented at the top of
+    localize_capture.find_clap: the DFSDM offset is large and slowly decaying,
+    and the median below would otherwise measure that offset rather than room
+    noise, understating SNR badly enough to warn on a perfectly good clap.
+    Both copies of this locator must stay identical so the two scripts agree.
     """
+    cap = cap - cap.mean(axis=1, keepdims=True)
     env = np.sum(np.abs(cap), axis=0)
     peak = int(np.argmax(env))
 
@@ -200,6 +224,9 @@ def sync_check(cap, onset):
     win = win - win.mean(axis=1, keepdims=True)
 
     print(f"GCC-PHAT lags over samples {start}..{stop}, reference mic0")
+    print(f"  tolerance {SYNC_TOLERANCE:.2f} samples "
+          f"= {APERTURE_SAMPLES:.2f} aperture ({geom.ACTIVE}) "
+          f"+ {SYNC_SLACK:.1f} slack")
     print("  mic    lag (samples)   lag (us)   verdict")
     worst = 0.0
     for m in range(cap.shape[0]):
@@ -213,11 +240,11 @@ def sync_check(cap, onset):
     print()
 
     if worst <= SYNC_TOLERANCE:
-        print(f"PASS: all four channels within {SYNC_TOLERANCE:.0f} samples "
+        print(f"PASS: all four channels within {SYNC_TOLERANCE:.2f} samples "
               f"(worst {worst:.2f}). Filter sync looks correct.")
     else:
         print(f"FAIL: worst offset {worst:.2f} samples, over the "
-              f"{SYNC_TOLERANCE:.0f} sample tolerance.")
+              f"{SYNC_TOLERANCE:.2f} sample tolerance.")
         print("  Likely causes, in the order worth checking:")
         print("   - a filter did not start on the sync trigger (filter0 must")
         print("     be started LAST, filters 1-3 armed with SYNC_TRIGGER)")
