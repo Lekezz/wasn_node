@@ -5,14 +5,17 @@ The milestone 5 deliverable: estimated bearing versus true bearing for the
 built array, from real claps at known angles.
 
 How it finds your data:
-  - Every file named angle<NNN>_trial<K>_capture.npy in this directory, and
-    the older angle<NNN>_capture.npy single-trial form. The <NNN> is the
-    true angle in degrees and <K> is the trial number, which is exactly
-    what
+  - Every trial under captures/<session>/angle<NNN>/trial<K>.npy, which is
+    exactly what
         python catch_audio4.py --tag angle045 --trials 5
-    produces. Trials are grouped by angle: each angle gets a mean bearing
-    and a spread across its trials. So the normal workflow, sweep several
-    angles with several trials each, then rerun this, needs no arguments.
+    produces, plus any legacy loose angle<NNN>_trial<K>_capture.npy left in
+    this directory. Trials are grouped by angle: each angle gets a mean
+    bearing and a spread across its trials. So the normal workflow, sweep
+    several angles with several trials each, then rerun this, needs no
+    arguments.
+  - Pass --session NAME to plot one session only. Do that whenever you have
+    moved the array, because captures taken in a different room setup have
+    a different echo environment and are not more samples of the same thing.
   - Any extra points passed as PATH:ANGLE on the command line, e.g.
         python plot_validation.py captures/2026-07-23-square-clap/square_clap_4mic.npy:90
     which is how the already-archived 90 degree capture gets included
@@ -26,17 +29,16 @@ degrees off. Do not confuse the two.
 
 Output: validation_plot.png, plus a printed table.
 
-Run:  python plot_validation.py [extra PATH:ANGLE ...]
+Run:  python plot_validation.py [--session NAME] [extra PATH:ANGLE ...]
 """
 
-import glob
 import os
-import re
 import sys
 
 import numpy as np
 
 import array_geometry as geom
+import capture_paths as cp
 import localization_sim as ls
 import localize_capture as lc
 
@@ -59,22 +61,24 @@ def bearing_of(cap):
     return b % 360
 
 
-def measured_trials(extra):
+def measured_trials(extra, only_session=None):
     """
     Per-trial results grouped by true angle.
 
     Returns a list of dicts, one per true angle, sorted by angle:
         {"true", "errors" (list), "ests" (list), "n"}
     error is wrapped to [-180, 180]. extra is a list of PATH:ANGLE strings.
+    only_session limits the plot to one captures/ session folder, which is
+    what you want after moving the array: a sweep recorded against a different
+    room is different data, not more of the same.
     """
     found = {}                       # path -> true angle, dedup by path
 
-    # Multi-trial files first, then the single-trial form; both patterns.
-    for pat in ("angle*_trial*_capture.npy", "angle*_capture.npy"):
-        for path in sorted(glob.glob(pat)):
-            m = re.search(r"angle(\d+)", os.path.basename(path))
-            if m:
-                found[os.path.abspath(path)] = float(m.group(1))
+    # Every angled capture on disk: the captures/<session>/angle<NNN>/ layout
+    # plus any legacy loose files. capture_paths owns both forms so this
+    # script does not have to know the layout.
+    for d in cp.find_captures(session=only_session):
+        found[d["path"]] = d["angle"]
 
     for item in extra:
         if ":" not in item:
@@ -136,12 +140,13 @@ def sim_reference(step=5, trials=3):
     return np.array(trues), np.array(ests), np.array(errs)
 
 
-def main(extra):
-    groups = measured_trials(extra)
+def main(extra, only_session=None):
+    groups = measured_trials(extra, only_session)
     st, se, serr = sim_reference()
 
     print(f"array: {geom.ACTIVE}  (condition number "
           f"{geom.describe(geom.active_positions())['cond']:.2f})")
+    print(f"session: {only_session or 'all sessions'}")
     print(f"simulation reference: mean |error| {np.abs(serr).mean():.2f} deg, "
           f"worst {np.abs(serr).max():.2f} deg\n")
 
@@ -245,4 +250,10 @@ def main(extra):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    argv = sys.argv[1:]
+    session = None
+    if "--session" in argv:
+        k = argv.index("--session")
+        session = argv[k + 1]
+        del argv[k:k + 2]
+    main(argv, session)

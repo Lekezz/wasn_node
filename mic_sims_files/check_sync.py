@@ -32,6 +32,7 @@ import sys
 import numpy as np
 
 import array_geometry as geom
+import capture_paths as cp
 from localization_sim import gcc_phat
 
 FS = 16000
@@ -274,10 +275,16 @@ def maybe_plot(cap, start, stop):
 
 
 if __name__ == "__main__":
-    path = sys.argv[1] if len(sys.argv) > 1 else "capture.npy"
+    if len(sys.argv) > 1:
+        path = sys.argv[1]
+    else:
+        path = cp.newest_capture()      # just-recorded trial, no argument
+        if path is None:
+            raise SystemExit("no captures found. Record one first:\n"
+                             "  python catch_audio4.py COM4 --tag angle000")
     cap = load_capture(path)
-    print(f"loaded {path}: {cap.shape[0]} channels, {cap.shape[1]} samples "
-          f"({cap.shape[1] / FS:.3f} s)\n")
+    print(f"loaded {cp.describe(path)}: {cap.shape[0]} channels, "
+          f"{cap.shape[1]} samples ({cap.shape[1] / FS:.3f} s)\n")
 
     problems = channel_health(cap)
     onset = find_clap(cap)

@@ -21,6 +21,7 @@ import sys
 import numpy as np
 
 import array_geometry as geom
+import capture_paths as cp
 import localization_sim as ls
 
 FS = ls.FS
@@ -167,14 +168,20 @@ if __name__ == "__main__":
         k = args.index("--true-angle")
         true_angle = float(args[k + 1])
         del args[k:k + 2]
-    path = args[0] if args else "capture.npy"
+    if args:
+        path = args[0]
+    else:
+        path = cp.newest_capture()      # just-recorded trial, no argument
+        if path is None:
+            raise SystemExit("no captures found. Record one first:\n"
+                             "  python catch_audio4.py COM4 --tag angle000")
 
     cap = np.load(path)
     if cap.ndim != 2 or cap.shape[0] != 4:
         raise SystemExit(f"expected a (4, nsamples) array, got {cap.shape}")
     cap = cap.astype(np.float64)
-    print(f"loaded {path}: {cap.shape[0]} channels, {cap.shape[1]} samples "
-          f"({cap.shape[1]/FS:.3f} s)\n")
+    print(f"loaded {cp.describe(path)}: {cap.shape[0]} channels, "
+          f"{cap.shape[1]} samples ({cap.shape[1]/FS:.3f} s)\n")
 
     if not check_geometry(MIC_POS):
         raise SystemExit(1)
