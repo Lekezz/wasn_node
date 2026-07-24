@@ -53,12 +53,28 @@ Supervisor: Ben. Owner: Leke (undergrad EE). Reference design: SpeechCompass
   with per-channel length, channels sent sequentially in mic order.
 - RAM budget: 256 KB total. Four channels at 16 kHz int16 = 128 KB/s.
   RECORD_SECS = 1 for the 4-mic build.
-- WARMUP_SAMPLES = 4000 (0.25 s) is discarded per mic before storing
-  starts, so the stored second is past mic turn-on and filter settling.
-  At RECORD_SECS 1 there is no room to trim that offline. Every mic drops
-  the same count from its own stream, so channel alignment is untouched.
-  Practical effect: the useful window is about 0.25 s to 1.25 s after the
-  green LED, so clap about half a second after pressing the button.
+- WARMUP_SAMPLES = 4000 (0.25 s) is discarded before storing starts, so
+  the stored second is past mic turn-on and filter settling. At RECORD_SECS
+  1 there is no room to trim that offline. Warm-up is now a single global
+  counter (not per-mic): the four channels are drained in lockstep, so one
+  counter keeps them identical and channel alignment is untouched.
+- Capture is CLAP-TRIGGERED, so you no longer time the clap. Button press
+  arms the array (green LED); it discards the warm-up, then LISTENS
+  indefinitely; the first frame with any sample past TRIGGER_LEVEL (2500,
+  int16 domain after >>8) becomes sample 0 of the stored second. Room noise
+  sits under 1000, a clap peaks near 15000, so 2500 has wide margin. Green
+  LED covers both listening and storing, so there is no visual cue for the
+  exact trigger instant. The four channels are handled as one synchronized
+  frame (act only when all four DMA flags of a phase are up, treat all four
+  identically), so the clap can never start one channel a frame ahead of
+  another. Alignment, which GCC-PHAT depends on, is exact.
+- Capture logic lives in mic_test/Core/Src/capture.c + Core/Inc/capture.h,
+  NOT in main.c. These are user files CubeMX does not own, so regeneration
+  cannot touch them. main.c only calls Capture_Arm() on button press and
+  Capture_Poll() every loop pass, both inside USER CODE fences. The DFSDM
+  DMA callbacks live in capture.c and override the HAL weak defaults from
+  there. capture.c owns the buffers and the config #defines (SAMPLE_RATE,
+  RECORD_SECS, NUM_MICS, DMA_BUF_LEN, WARMUP_SAMPLES, TRIGGER_LEVEL).
 
 ## Array geometry
 
@@ -122,6 +138,10 @@ reflects the bearing even when every delay is right.
 ## Repo layout
 
 - mic_test/  STM32CubeIDE project (config in mic_test.ioc)
+- mic_test/Core/Src/capture.c + Core/Inc/capture.h  clap-triggered 4-mic
+  capture: buffers, trigger/warm-up/frame state machine, UART "WAV4" dump,
+  DFSDM DMA callbacks. User files, regeneration-safe. main.c just calls
+  Capture_Arm() and Capture_Poll().
 - mic_sims_files/catch_audio.py   single-mic serial capture -> WAV ("WAV0")
 - mic_sims_files/catch_audio4.py  4-channel capture -> mic0..3.wav + capture.npy
   (port defaults to COM4, override with argv: python catch_audio4.py COM7)

@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "capture.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,19 +31,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-//Data specs of mics and hardware
-#define SAMPLE_RATE   16000
-#define RECORD_SECS   1
-#define NUM_MICS      4
-#define TOTAL_SAMPLES (SAMPLE_RATE * RECORD_SECS)
-#define DMA_BUF_LEN   2048
-/* Samples thrown away per mic before we start storing. The mics and the
-   DFSDM filters both need a moment after start (turn-on pop, DC step), and
-   at RECORD_SECS 1 there is no room to trim that away offline. Every mic
-   drops the same count from its own stream, so relative alignment between
-   channels is untouched. 4000 samples = 0.25 s at 16 kHz. */
-#define WARMUP_SAMPLES 4000
+/* Capture configuration and buffers now live in capture.c / capture.h. */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -69,15 +57,7 @@ DMA_HandleTypeDef hdma_dfsdm1_flt3;
 DMA_HandleTypeDef hdma_dfsdm1_flt2;
 
 /* USER CODE BEGIN PV */
-
-//data instantiation, one slot per mic
-int32_t dma_buf[NUM_MICS][DMA_BUF_LEN];
-int16_t recording[NUM_MICS][TOTAL_SAMPLES];
-volatile uint32_t rec_index[NUM_MICS];
-volatile uint32_t warmup_left[NUM_MICS];
-volatile uint8_t half_flag[NUM_MICS], full_flag[NUM_MICS];
-volatile uint8_t recording_active = 0;
-extern UART_HandleTypeDef hcom_uart[];
+/* Capture buffers and state now live in capture.c (file-private). */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -92,32 +72,7 @@ static void MX_DFSDM1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-/* filter0=ch2 PE7 rising -> mic0, filter1=ch1 PE7 falling -> mic1,
-   filter2=ch0 PB1 rising -> mic2, filter3=ch3 PB1 falling -> mic3 */
-static int filter_to_mic(DFSDM_Filter_HandleTypeDef *f)
-{
-    if (f == &hdfsdm1_filter0) return 0;
-    if (f == &hdfsdm1_filter1) return 1;
-    if (f == &hdfsdm1_filter2) return 2;
-    return 3;
-}
-
-//stores samples into per-mic buffer
-static void store_samples(int mic, int32_t *src, uint32_t count)
-{
-    uint32_t i = 0;
-
-    /* burn off this mic's warm-up allowance first */
-    while (i < count && warmup_left[mic] > 0) {
-        warmup_left[mic]--;
-        i++;
-    }
-
-    for (; i < count && rec_index[mic] < TOTAL_SAMPLES; i++) {
-        recording[mic][rec_index[mic]++] = (int16_t)(src[i] >> 8);
-    }
-}
+/* Capture helpers, DMA callbacks, and state machine now live in capture.c. */
 /* USER CODE END 0 */
 
 /**
@@ -197,90 +152,19 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    /* IDLE: watch for the button. BspButtonState is set to BUTTON_PRESSED by
+       the button's own interrupt (EXTI13 -> BSP_PB_Callback). A press arms a
+       capture; Capture_Arm ignores it if one is already running. */
+    if (BspButtonState == BUTTON_PRESSED)
+    {
+      BspButtonState = BUTTON_RELEASED;   /* consume the press so it fires once */
+      Capture_Arm();
+    }
 
-	  /* STATE 1: IDLE. Waiting for the user to ask for a recording.
-	         BspButtonState is set to BUTTON_PRESSED by the button's own
-	         interrupt (EXTI13 -> BSP_PB_Callback). We just watch it. */
-	      if (!recording_active && BspButtonState == BUTTON_PRESSED)
-	      {
-	        BspButtonState = BUTTON_RELEASED;   /* consume the press so it fires once */
-
-	        /* fresh start: rewind every mic and clear stale flags left over
-	           from any previous run */
-	        for (int m = 0; m < NUM_MICS; m++) {
-	          rec_index[m] = 0;
-	          warmup_left[m] = WARMUP_SAMPLES;
-	          half_flag[m] = 0;
-	          full_flag[m] = 0;
-	        }
-	        recording_active = 1;
-
-	        BSP_LED_On(LED_GREEN);              /* "recording" light */
-
-	        /* Arm the whole hardware chain. Start the three sync-armed slave
-	           filters first; they wait. filter0 is started LAST and its start
-	           releases all four at the same instant, so the channels stay
-	           sample-aligned. From here on, mic -> DFSDM -> DMA -> dma_buf runs
-	           with zero CPU involvement; circular DMA interrupts us at each
-	           buffer's halfway point and at its end, over and over. */
-	        if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter1, dma_buf[1], DMA_BUF_LEN) != HAL_OK) Error_Handler();
-	        if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter2, dma_buf[2], DMA_BUF_LEN) != HAL_OK) Error_Handler();
-	        if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter3, dma_buf[3], DMA_BUF_LEN) != HAL_OK) Error_Handler();
-	        if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, dma_buf[0], DMA_BUF_LEN) != HAL_OK) Error_Handler();
-	      }
-
-	      /* STATE 2: RECORDING. The hardware is filling all four dma_buf[m] on
-	         its own. Our only job is to drain each half after its interrupt
-	         flags it. */
-	      if (recording_active)
-	      {
-	        for (int m = 0; m < NUM_MICS; m++) {
-	          if (half_flag[m]) {
-	            half_flag[m] = 0;               /* lower the hand */
-	            /* First half stable; DMA is now writing the second half, so
-	               reading the first half is safe. */
-	            store_samples(m, &dma_buf[m][0], DMA_BUF_LEN / 2);
-	          }
-	          if (full_flag[m]) {
-	            full_flag[m] = 0;
-	            /* Second half complete; DMA has wrapped to the first half. */
-	            store_samples(m, &dma_buf[m][DMA_BUF_LEN / 2], DMA_BUF_LEN / 2);
-	          }
-	        }
-
-	        /* Done only once every mic has banked TOTAL_SAMPLES. */
-	        uint8_t all_done = 1;
-	        for (int m = 0; m < NUM_MICS; m++)
-	          if (rec_index[m] < TOTAL_SAMPLES) all_done = 0;
-
-	        if (all_done)
-	        {
-	          HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter0);  /* silence the chain */
-	          HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter1);
-	          HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter2);
-	          HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter3);
-	          recording_active = 0;             /* back to idle after this */
-	          BSP_LED_Off(LED_GREEN);
-
-	          /* Ship all four channels to the PC. Blue LED = "transmitting".
-	             Protocol: 8-byte header "WAV4" + little-endian uint32 of the
-	             per-channel byte count, then the four channels back to back in
-	             mic order. At RECORD_SECS=1 each channel is 32000 bytes, which
-	             fits one HAL_UART_Transmit (uint16_t size limit is 65535), so no
-	             chunking loop is needed. If RECORD_SECS ever grows, bring the
-	             chunking loop back. */
-	          BSP_LED_On(LED_BLUE);
-	          uint32_t nbytes = TOTAL_SAMPLES * 2u;
-	          uint8_t header[8] = { 'W','A','V','4',
-	                                (uint8_t)nbytes, (uint8_t)(nbytes >> 8),
-	                                (uint8_t)(nbytes >> 16), (uint8_t)(nbytes >> 24) };
-	          HAL_UART_Transmit(&hcom_uart[COM1], header, 8, HAL_MAX_DELAY);
-	          for (int m = 0; m < NUM_MICS; m++)
-	            HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t *)recording[m],
-	                              (uint16_t)nbytes, HAL_MAX_DELAY);
-	          BSP_LED_Off(LED_BLUE);
-	        }
-	      }
+    /* Run the capture state machine: drain the DMA frames, watch for the
+       clap, and once a full second is banked, dump it over UART. Does
+       nothing until armed. See capture.c. */
+    Capture_Poll();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -569,18 +453,8 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-//interrupts for when a mic's DMA buffer is half full and completely full.
-//The callback maps the reporting filter back to its mic index so all four
-//channels share the same drain path.
-void HAL_DFSDM_FilterRegConvHalfCpltCallback(DFSDM_Filter_HandleTypeDef *f)
-{
-    half_flag[filter_to_mic(f)] = 1;
-}
-
-void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *f)
-{
-    full_flag[filter_to_mic(f)] = 1;
-}
+/* The DFSDM DMA callbacks now live in capture.c (they override the HAL weak
+   defaults from there just the same). */
 /* USER CODE END 4 */
 
 /**

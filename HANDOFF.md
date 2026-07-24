@@ -2,9 +2,12 @@
 
 This file holds the story, the open work, and the debugging history that
 explains why things are the way they are. Read together with CLAUDE.md,
-which holds the compact always-true facts. Last updated 2026-07-22
-(four-mic capture proven on hardware, geometry moved into a registry,
-active layout 9.25 x 10 cm on two glued breadboards).
+which holds the compact always-true facts. Last updated 2026-07-24
+(capture made clap-triggered so the clap no longer has to be timed, and
+the capture logic moved out of main.c into a regeneration-safe capture.c /
+capture.h module). Prior milestone 2026-07-22: four-mic capture proven on
+hardware, geometry moved into a registry, active layout 9.25 x 10 cm on
+two glued breadboards.
 
 ## Where the project stands
 
@@ -29,10 +32,18 @@ Working, committed, and now exercised on hardware:
 - CubeMX four-mic configuration (channels 0,1,3 added, filters 1-3, three
   new DMA requests), plus commit 9f179e1 fixing channel 3 RightBitShift
   to 0x07.
-- The four-mic user code is in mic_test/Core/Src/main.c as of commit
-  b21479e. Sync-order filter start, per-mic circular DMA drain via a
-  filter->mic map, "WAV4" UART dump. RECORD_SECS dropped 4 -> 1 for the
-  RAM budget. 0 errors, 0 warnings, bss 164040 bytes.
+- The four-mic user code now lives in mic_test/Core/Src/capture.c +
+  Core/Inc/capture.h (moved out of main.c 2026-07-24). Sync-order filter
+  start, circular DMA drain via a filter->mic map, "WAV4" UART dump.
+  RECORD_SECS dropped 4 -> 1 for the RAM budget. As landed in main.c it was
+  0 errors, 0 warnings, bss 164040 bytes; the module refactor and the
+  clap-trigger change have not been built on hardware yet (see below).
+- Capture is now CLAP-TRIGGERED (2026-07-24), so the clap no longer has to
+  be timed against a fixed window. Button press arms the array, warm-up is
+  discarded, then it listens indefinitely and the first frame past
+  TRIGGER_LEVEL becomes sample 0 of the stored second. Wire format ("WAV4")
+  is unchanged, so catch_audio4.py and check_sync.py are untouched. NOT yet
+  built or run on hardware.
 - mic_sims_files/catch_audio4.py as of commit e6058c1. Syncs on "WAV4",
   reads the per-channel length, saves mic0.wav..mic3.wav plus capture.npy
   shaped (4, nsamples) to match what localization_sim.py expects.
@@ -147,147 +158,56 @@ Build notes:
   each sharing pair on adjacent corners rather than diagonal ones to keep
   those shared DOUT stubs short.
 
-## Reference: the 4-mic user code, as landed in main.c
+## Reference: the 4-mic capture module (capture.c / capture.h)
 
-DONE, committed in b21479e. This listing is kept as a backup because
-CubeMX regeneration wipes anything outside the USER CODE fences, and this
-is the fastest way to restore it. If main.c and this listing ever
-disagree, main.c wins. All of it lives inside USER CODE fences in
-mic_test/Core/Src/main.c.
+The capture code lives in mic_test/Core/Src/capture.c and
+Core/Inc/capture.h. capture.c is the source of truth: if anything here
+disagrees with it, capture.c wins. Unlike the old arrangement, this no
+longer needs to be reproduced as a restore backup, because capture.c and
+capture.h are user files CubeMX does not own, so regeneration cannot wipe
+them. main.c only holds two calls inside USER CODE fences: Capture_Arm()
+on the button press and Capture_Poll() every loop pass.
 
-USER CODE BEGIN PD:
+What the module does:
+- Owns the config #defines (SAMPLE_RATE, RECORD_SECS 1, NUM_MICS 4,
+  DMA_BUF_LEN 2048, WARMUP_SAMPLES 4000, TRIGGER_LEVEL 2500), the buffers
+  (dma_buf, recording, rec_index), and the flags, all file-private.
+- Capture_Arm(): rewinds every mic, sets warm-up, clears the trigger,
+  lights the green LED, and sync-starts the filters (slaves 1,2,3 first,
+  filter0 LAST so all four release together). Ignored if already recording.
+- Capture_Poll(): drains DMA a whole aligned frame at a time (the same half
+  of all four channels, which arrive together because the filters are
+  sync-started), runs the warm-up / watch / store state machine, and on
+  completion stops the DMAs and dumps "WAV4" over UART.
+- The two HAL_DFSDM_FilterRegConv*Callback functions live here and override
+  the HAL weak defaults; they just raise per-mic half/full flags.
 
-    #define SAMPLE_RATE   16000
-    #define RECORD_SECS   1
-    #define NUM_MICS      4
-    #define TOTAL_SAMPLES (SAMPLE_RATE * RECORD_SECS)
-    #define DMA_BUF_LEN   2048
-    #define WARMUP_SAMPLES 4000
-
-USER CODE BEGIN PV (replaces the single-mic buffers):
-
-    int32_t dma_buf[NUM_MICS][DMA_BUF_LEN];
-    int16_t recording[NUM_MICS][TOTAL_SAMPLES];
-    volatile uint32_t rec_index[NUM_MICS];
-    volatile uint32_t warmup_left[NUM_MICS];
-    volatile uint8_t half_flag[NUM_MICS], full_flag[NUM_MICS];
-    volatile uint8_t recording_active = 0;
-    extern UART_HandleTypeDef hcom_uart[];
-
-USER CODE BEGIN 0 (replaces store_samples):
-
-    /* filter0=ch2 PE7 rising -> mic0, filter1=ch1 PE7 falling -> mic1,
-       filter2=ch0 PB1 rising -> mic2, filter3=ch3 PB1 falling -> mic3 */
-    static int filter_to_mic(DFSDM_Filter_HandleTypeDef *f)
-    {
-        if (f == &hdfsdm1_filter0) return 0;
-        if (f == &hdfsdm1_filter1) return 1;
-        if (f == &hdfsdm1_filter2) return 2;
-        return 3;
-    }
-
-    static void store_samples(int mic, int32_t *src, uint32_t count)
-    {
-        uint32_t i = 0;
-        while (i < count && warmup_left[mic] > 0) {   /* burn off warm-up */
-            warmup_left[mic]--;
-            i++;
-        }
-        for (; i < count && rec_index[mic] < TOTAL_SAMPLES; i++) {
-            recording[mic][rec_index[mic]++] = (int16_t)(src[i] >> 8);
-        }
-    }
-
-USER CODE BEGIN 2 (new, forces filter sync even if CubeMX did not):
-
-    hdfsdm1_filter1.Init.RegularParam.Trigger = DFSDM_FILTER_SYNC_TRIGGER;
-    hdfsdm1_filter2.Init.RegularParam.Trigger = DFSDM_FILTER_SYNC_TRIGGER;
-    hdfsdm1_filter3.Init.RegularParam.Trigger = DFSDM_FILTER_SYNC_TRIGGER;
-    if (HAL_DFSDM_FilterInit(&hdfsdm1_filter1) != HAL_OK) Error_Handler();
-    if (HAL_DFSDM_FilterInit(&hdfsdm1_filter2) != HAL_OK) Error_Handler();
-    if (HAL_DFSDM_FilterInit(&hdfsdm1_filter3) != HAL_OK) Error_Handler();
-
-USER CODE BEGIN 4 (replaces the two callbacks):
-
-    void HAL_DFSDM_FilterRegConvHalfCpltCallback(DFSDM_Filter_HandleTypeDef *f)
-    {
-        half_flag[filter_to_mic(f)] = 1;
-    }
-
-    void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *f)
-    {
-        full_flag[filter_to_mic(f)] = 1;
-    }
-
-USER CODE BEGIN WHILE (replaces the whole single-mic state machine):
-
-    if (!recording_active && BspButtonState == BUTTON_PRESSED)
-    {
-      BspButtonState = BUTTON_RELEASED;
-      for (int m = 0; m < NUM_MICS; m++) {
-        rec_index[m] = 0;
-        warmup_left[m] = WARMUP_SAMPLES;
-        half_flag[m] = 0;
-        full_flag[m] = 0;
-      }
-      recording_active = 1;
-      BSP_LED_On(LED_GREEN);
-      /* sync-armed filters first, trigger filter LAST */
-      if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter1, dma_buf[1], DMA_BUF_LEN) != HAL_OK) Error_Handler();
-      if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter2, dma_buf[2], DMA_BUF_LEN) != HAL_OK) Error_Handler();
-      if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter3, dma_buf[3], DMA_BUF_LEN) != HAL_OK) Error_Handler();
-      if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, dma_buf[0], DMA_BUF_LEN) != HAL_OK) Error_Handler();
-    }
-
-    if (recording_active)
-    {
-      for (int m = 0; m < NUM_MICS; m++) {
-        if (half_flag[m]) { half_flag[m] = 0; store_samples(m, &dma_buf[m][0], DMA_BUF_LEN / 2); }
-        if (full_flag[m]) { full_flag[m] = 0; store_samples(m, &dma_buf[m][DMA_BUF_LEN / 2], DMA_BUF_LEN / 2); }
-      }
-
-      uint8_t all_done = 1;
-      for (int m = 0; m < NUM_MICS; m++)
-        if (rec_index[m] < TOTAL_SAMPLES) all_done = 0;
-
-      if (all_done)
-      {
-        HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter0);
-        HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter1);
-        HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter2);
-        HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter3);
-        recording_active = 0;
-        BSP_LED_Off(LED_GREEN);
-        BSP_LED_On(LED_BLUE);
-
-        uint32_t nbytes = TOTAL_SAMPLES * 2u;
-        uint8_t header[8] = { 'W','A','V','4',
-                              (uint8_t)nbytes, (uint8_t)(nbytes >> 8),
-                              (uint8_t)(nbytes >> 16), (uint8_t)(nbytes >> 24) };
-        HAL_UART_Transmit(&hcom_uart[COM1], header, 8, HAL_MAX_DELAY);
-        for (int m = 0; m < NUM_MICS; m++)
-          HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t *)recording[m],
-                            (uint16_t)nbytes, HAL_MAX_DELAY);
-
-        BSP_LED_Off(LED_BLUE);
-      }
-    }
-
-Notes on this code (all already applied, kept as rationale):
-- The warm-up discard exists because two notes in this file contradicted
-  each other: trim the first second of settling, but RECORD_SECS is 1 so
-  there is nothing left to trim. Dropping 0.25 s in firmware before
-  storing starts resolves it. Sync is safe because every mic drops the
-  same count from its own stream, so the channels shift together.
+Design notes (kept as rationale):
+- Clap trigger: after warm-up, the first frame with any sample past
+  TRIGGER_LEVEL (int16 domain, after >>8) latches "triggered" and becomes
+  sample 0. This removes the timed-clap window; the array listens as long
+  as it takes. Room noise is under 1000, a clap peaks near 15000, so 2500
+  has margin. Raise it if noise trips it, lower it if a real clap does not.
+- Alignment is preserved by processing the four channels as ONE frame: act
+  only when all four DMA flags of a phase are up, and treat all four
+  identically. That way the clap can never start one channel a frame ahead
+  of another. This is why warm-up is now a single global counter, not
+  per-mic: the channels move in lockstep. GCC-PHAT depends on this.
+- The warm-up discard exists because two notes contradicted each other:
+  trim the first second of settling, but RECORD_SECS is 1 so there is
+  nothing to trim. Dropping 0.25 s in firmware before storing resolves it.
 - 32000 bytes per channel fits a single HAL_UART_Transmit (uint16_t size
-  limit is 65535), so no chunking loop needed at RECORD_SECS 1. If the
-  duration ever grows, reintroduce chunking (this bug bit us once: the
-  size arg silently truncated 128000 to 62464).
-- Verify against the generated code that handle names match (hdfsdm1_filter0
-  through hdfsdm1_filter3, hdfsdm1_channel0/1/2/3). Adjust if CubeMX named
-  them differently.
-- Before building, confirm in stm32l5xx_hal_msp.c: all four DMA inits say
-  DMA_CIRCULAR and WORD alignment, and GPIO comments list PF10, PE7, PB1.
+  limit is 65535), so no chunking loop is needed at RECORD_SECS 1. If the
+  duration ever grows, reintroduce chunking (this bug bit us once: the size
+  arg silently truncated 128000 to 62464).
+- capture.c externs the four filter handles and hcom_uart[] from the
+  generated code / BSP. If CubeMX ever renames a handle, update the externs
+  and filter_to_mic. Before building, still confirm in stm32l5xx_hal_msp.c
+  that all four DMA inits say DMA_CIRCULAR and WORD alignment.
+- STM32CubeIDE auto-compiles capture.c: the .cproject registers Core as a
+  recursive source path, and Core/Inc is already on the include path, so no
+  project-config change was needed to add the module.
+
 
 ## Reference: 4-channel capture script
 
@@ -301,12 +221,15 @@ reshaping. The single-mic "WAV0" version is still there as catch_audio.py.
 ## Milestones from here
 
 1. DONE. Mics 1-3 wired on the temporary in-line breadboard.
-2. First 4-mic run. This is the first time this firmware executes at all,
-   so expect to debug the code as much as the wiring. Sequence:
-     - flash the current main.c (the warm-up change needs a rebuild)
+2. First 4-mic run. The clap-trigger and module refactor have not run on
+   hardware yet, so expect to debug the code as much as the wiring.
+   Sequence:
+     - build and flash in STM32CubeIDE (capture.c is a new file; a clean
+       build picks it up automatically)
      - python catch_audio4.py COM4    (start it BEFORE the button press)
-     - press the blue button, wait about half a second for the warm-up to
-       pass, then one sharp clap 30 to 50 cm away, broadside to the line
+     - press the blue button (green LED = armed and listening), then one
+       sharp clap 30 to 50 cm away, broadside to the line. Timing no longer
+       matters: it waits for the clap, so clap whenever you are ready.
      - blue LED means it is dumping, about 11 s at 115200
      - python check_sync.py
 3. Clap sync check. check_sync.py prints per-channel RMS/peak/DC, finds
