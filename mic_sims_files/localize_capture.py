@@ -145,7 +145,9 @@ def report_bearing(bearing, true_angle=None):
     print()
     print(f"ESTIMATED BEARING: {b:.1f} degrees")
     print("  (measured counterclockwise from +x, the long axis of the board,")
-    print("   with +x pointing toward the mic0 / mic3 end)")
+    print("   with +x pointing toward the mic1 / mic3 edge, the right-hand")
+    print("   side when mic0 is the top-left corner. 0 deg means the source")
+    print("   is off that edge, 90 deg is off the mic0 / mic1 top edge.)")
 
     for cone in POOR_CONES:
         if abs((b - cone + 180) % 360 - 180) <= POOR_HALF_WIDTH:
