@@ -58,6 +58,9 @@ static volatile uint8_t half_flag[NUM_MICS], full_flag[NUM_MICS];
 static volatile uint8_t recording_active = 0;
 /* 0 while armed and listening for the clap, 1 once it has been heard */
 static volatile uint8_t triggered = 0;
+/* raised when a capture finishes and its dump is done; cleared by
+   Capture_TakeResult so exactly one consumer acts on each recording */
+static volatile uint8_t result_ready = 0;
 
 /* Map the filter that raised an interrupt back to its mic index.
    filter0=ch2 PE7 rising -> mic0, filter1=ch1 PE7 falling -> mic1,
@@ -156,6 +159,7 @@ void Capture_Arm(void)
     }
     warmup_left = WARMUP_SAMPLES;     /* discard settling pop first */
     triggered = 0;                    /* then watch for the clap */
+    result_ready = 0;                 /* previous result is now stale */
     recording_active = 1;
 
     BSP_LED_On(LED_GREEN);            /* armed: listening for a clap */
@@ -205,7 +209,39 @@ void Capture_Poll(void)
         recording_active = 0;            /* back to idle after this */
         BSP_LED_Off(LED_GREEN);
         dump_capture();
+        /* Raised only after the dump, so the raw audio is already on the wire
+           before any localization output follows it. catch_audio4.py stops
+           reading at the end of the WAV4 payload, so the report that comes
+           after cannot corrupt the capture it is describing. */
+        result_ready = 1;
     }
+}
+
+
+int Capture_TakeResult(void)
+{
+    if (!result_ready) return 0;
+    result_ready = 0;
+    return 1;
+}
+
+
+const int16_t *Capture_Channel(int mic)
+{
+    if (mic < 0 || mic >= NUM_MICS) return 0;
+    return recording[mic];
+}
+
+
+uint32_t Capture_Length(void)
+{
+    return TOTAL_SAMPLES;
+}
+
+
+int Capture_NumMics(void)
+{
+    return NUM_MICS;
 }
 
 /* DMA interrupt callbacks. These override the HAL weak defaults, so they must

@@ -165,6 +165,32 @@ SECTIONS
     __bss_end__ = _ebss;
   } >RAM
 
+  /* Localization working buffers, placed in the second RAM bank.
+   *
+   * SRAM1 ("RAM", 192K) is nearly full: capture.c's recording buffer is 125K
+   * and its DMA scratch is another 32K, leaving only about 32K. GCC-PHAT on a
+   * 2048-sample window needs a 4096-point FFT and three 16K float buffers,
+   * which does not fit there but fits easily in SRAM2 ("RAM2", 64K), which
+   * nothing else uses.
+   *
+   * Anything tagged __attribute__((section(".ram2"))) lands here; see
+   * gcc_phat.c. NOLOAD keeps startup from zeroing 48K that is overwritten by
+   * the first transform anyway, and keeps the buffers out of the .elf image.
+   *
+   * If CubeMX ever regenerates this linker script it will drop this section
+   * and the link will fail with an undefined .ram2 placement. That is the
+   * intended failure mode: loud, at build time, not silent at run time.
+   */
+  .ram2 (NOLOAD) :
+  {
+    . = ALIGN(4);
+    _sram2 = .;
+    *(.ram2)
+    *(.ram2*)
+    . = ALIGN(4);
+    _eram2 = .;
+  } >RAM2
+
   /* User_heap_stack section, used to check that there is enough "RAM" Ram  type memory left */
   ._user_heap_stack :
   {

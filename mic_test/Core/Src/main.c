@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "capture.h"
+#include "localize.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -145,6 +146,14 @@ int main(void)
   /* -- Sample board code to send message over COM1 port ---- */
   printf("Welcome to STM32 world !\n\r");
 
+  /* Prepare the on-board localizer: sets up the FFT and validates the active
+     array geometry. Done once here rather than lazily on the first capture so
+     a bad configuration is reported at boot, not eleven seconds after a clap. */
+  if (!Localize_Init())
+  {
+    printf("WARNING: localizer failed to initialise. Captures will still be "
+           "dumped, but no bearing will be computed.\r\n");
+  }
 
   /* USER CODE END BSP */
 
@@ -165,6 +174,21 @@ int main(void)
        clap, and once a full second is banked, dump it over UART. Does
        nothing until armed. See capture.c. */
     Capture_Poll();
+
+    /* A capture just finished and its raw audio is already on the wire.
+       Localize it and print the bearing after the dump, so catch_audio4.py
+       gets a clean WAV4 payload and the report lands in the terminal behind
+       it. Takes a few tens of milliseconds; nothing else is time critical
+       here because the array is idle until the next button press. */
+    if (Capture_TakeResult())
+    {
+      static const int16_t *chans[4];
+      for (int m = 0; m < 4; m++) chans[m] = Capture_Channel(m);
+
+      static loc_result_t result;
+      Localize_Run(chans, Capture_Length(), &result);
+      Localize_Report(&result);
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

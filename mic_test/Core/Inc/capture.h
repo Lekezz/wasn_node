@@ -11,6 +11,9 @@
  *   - call Capture_Poll() every pass of the main while(1) loop. It runs the
  *     recording state machine and, when a capture finishes, dumps all four
  *     channels over UART ("WAV4").
+ *   - call Capture_TakeResult() after Capture_Poll(). It returns 1 exactly
+ *     once per completed capture, which is the cue to run localization on the
+ *     buffers that Capture_Channel() exposes.
  *
  * The two HAL_DFSDM_FilterRegConv*Callback functions live in capture.c and
  * override the HAL weak defaults, so all DMA handling is contained here too.
@@ -18,7 +21,30 @@
 #ifndef CAPTURE_H
 #define CAPTURE_H
 
+#include <stdint.h>
+
 void Capture_Arm(void);
 void Capture_Poll(void);
+
+/*
+ * 1 exactly once after each completed capture, then 0 until the next one.
+ * Reading it consumes the flag, so exactly one consumer acts on a capture and
+ * a slow consumer cannot process the same recording twice.
+ */
+int Capture_TakeResult(void);
+
+/*
+ * The stored channel for one mic, valid from the moment Capture_TakeResult()
+ * returns 1 until the next Capture_Arm(). Channels are sample-aligned with
+ * each other, which is the property GCC-PHAT depends on. Returns NULL for an
+ * out-of-range index.
+ */
+const int16_t *Capture_Channel(int mic);
+
+/* Samples per channel in the stored recording. */
+uint32_t Capture_Length(void);
+
+/* Number of channels, so callers do not have to hardcode 4. */
+int Capture_NumMics(void);
 
 #endif /* CAPTURE_H */
