@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import os
+import time
 import serial
 import wave
 import numpy as np
@@ -92,6 +93,40 @@ def sync_to_magic(port, magic):
             return True
 
 
+def read_report(port, overall_timeout=8.0):
+    """
+    Read the localizer's text report that the board prints after the raw dump.
+
+    The firmware sends the WAV4 payload first and only then the report, so by
+    the time this is called the audio is already safely read and nothing here
+    can corrupt it. Reading it matters because only one process can hold the
+    COM port: without this you would have to choose between capturing the data
+    and seeing the board's own answer.
+
+    Stops at the report's "--- end ---" marker, or when the board goes quiet,
+    or at overall_timeout. Returns a list of lines, empty if the firmware
+    produced nothing (an older build, or Localize_Init having failed).
+    """
+    previous_timeout = port.timeout
+    port.timeout = 0.5              # short, so silence is detected quickly
+    lines = []
+    deadline = time.time() + overall_timeout
+    try:
+        while time.time() < deadline:
+            raw = port.readline()
+            if not raw:
+                if lines:
+                    break           # it spoke, then stopped: report is done
+                continue            # still thinking, keep waiting
+            line = raw.decode("ascii", errors="replace").rstrip("\r\n")
+            lines.append(line)
+            if "--- end ---" in line:
+                break
+    finally:
+        port.timeout = previous_timeout
+    return lines
+
+
 def write_session_notes():
     """
     Record what the room looked like for this session. Written once when the
@@ -115,15 +150,18 @@ def write_session_notes():
 
 def paths_for(tag, k):
     """
-    Where trial k of this angle goes: the data file, and a function giving
-    the per-mic listening copy. tag None means the legacy loose form.
+    Where trial k of this angle goes: the data file, a function giving the
+    per-mic listening copy, and the on-board report. tag None means the legacy
+    loose form.
     """
     if tag is None:
         return (os.path.join(cp.BASE_DIR, "capture.npy"),
-                lambda m: os.path.join(cp.BASE_DIR, f"mic{m}.wav"))
+                lambda m: os.path.join(cp.BASE_DIR, f"mic{m}.wav"),
+                os.path.join(cp.BASE_DIR, "capture_bearing.txt"))
     cp.ensure_dirs(SESSION, tag)
     return (cp.trial_npy(SESSION, tag, k),
-            lambda m: cp.trial_wav(SESSION, tag, k, m))
+            lambda m: cp.trial_wav(SESSION, tag, k, m),
+            cp.trial_report(SESSION, tag, k))
 
 
 def capture_once(tag, k):
@@ -131,7 +169,7 @@ def capture_once(tag, k):
     Wait for one button press, read the four channels, save them.
     Returns the (NUM_MICS, nsamples) array, or None on any read failure.
     """
-    npy_name, wav_for = paths_for(tag, k)
+    npy_name, wav_for, report_name = paths_for(tag, k)
     ser.reset_input_buffer()     # drop boot text / stale bytes; idle = nothing
     print("Ready. Press the blue button on the board now...")
 
@@ -175,6 +213,22 @@ def capture_once(tag, k):
     else:
         note = ""
     print(f"Saved {cp.describe(npy_name)} (peak {peak} of 32767){note}")
+
+    # The board localizes the capture it just sent and prints the result. Show
+    # it and keep it beside the samples, so a trial carries the firmware's own
+    # answer and can be compared against localize_capture.py later.
+    report = read_report(ser)
+    if report:
+        print("  --- board's own bearing ---")
+        for line in report:
+            print(f"  | {line}")
+        with open(report_name, "w", encoding="utf-8") as f:
+            f.write("\n".join(report) + "\n")
+        print(f"  saved {cp.describe(report_name)}")
+    else:
+        print("  (no bearing report from the board: older firmware, or "
+              "Localize_Init failed at boot)")
+
     return cap
 
 

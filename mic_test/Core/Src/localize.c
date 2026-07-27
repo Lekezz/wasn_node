@@ -33,6 +33,46 @@
 static int s_ready = 0;
 
 
+/*
+ * Format a float without needing newlib's floating-point printf.
+ *
+ * The project links --specs=nano.specs, whose printf omits float support
+ * unless the link also pulls in -u _printf_float. Without it every %f in a
+ * report prints as nothing at all: the first hardware run came back with
+ * "BEARING  deg" and six blank pair delays while every integer field printed
+ * correctly. That is a silent, total loss of the numbers the port exists to
+ * produce.
+ *
+ * Turning the flag on would work, but it is an IDE linker setting, which is
+ * precisely the kind of state a CubeMX regeneration resets, and it costs
+ * roughly 10 KB of flash. Doing the conversion here with integer arithmetic
+ * keeps the output working no matter how the project is rebuilt, and keeps
+ * this file honest about depending only on integer printf.
+ *
+ * dp must be 2 or 3, the only precisions this file prints. Returns buf so it
+ * can be used directly as a printf argument.
+ */
+static const char *f2s(char *buf, int n, float v, int dp)
+{
+    if (isnan(v))  { snprintf(buf, n, "nan");  return buf; }
+    if (isinf(v))  { snprintf(buf, n, "%sinf", (v < 0.0f) ? "-" : ""); return buf; }
+
+    const char *sign = "";
+    if (v < 0.0f) { sign = "-"; v = -v; }
+
+    const long scale = (dp == 3) ? 1000L : 100L;
+    /* +0.5 rounds to nearest rather than truncating, matching how the Python
+       side's formatted output rounds. */
+    const long total = (long)(v * (float)scale + 0.5f);
+    const long ip = total / scale;
+    const long fp = total % scale;
+
+    if (dp == 3) snprintf(buf, n, "%s%ld.%03ld", sign, ip, fp);
+    else         snprintf(buf, n, "%s%ld.%02ld", sign, ip, fp);
+    return buf;
+}
+
+
 int Localize_Init(void)
 {
     s_ready = GccPhat_Init();
@@ -336,21 +376,27 @@ void Localize_Report(const loc_result_t *result)
     geom_info_t info;
     Geom_Describe(layout, &info);
 
+    /* Separate buffers per call site: several values share one printf. */
+    char a[24], b[24], c[24], d[24];
+
     printf("\r\n--- localization ---\r\n");
-    printf("array %s  span %.2f x %.2f cm  aperture %.1f cm (%.1f samples)\r\n",
+    printf("array %s  span %s x %s cm  aperture %s cm (%s samples)\r\n",
            layout->name,
-           (double)(info.span_x * 100.0f), (double)(info.span_y * 100.0f),
-           (double)(info.aperture_m * 100.0f), (double)info.aperture_samples);
-    printf("  rank %d of 2, condition number %.2f\r\n",
-           info.rank, (double)info.cond);
+           f2s(a, sizeof a, info.span_x * 100.0f, 2),
+           f2s(b, sizeof b, info.span_y * 100.0f, 2),
+           f2s(c, sizeof c, info.aperture_m * 100.0f, 2),
+           f2s(d, sizeof d, info.aperture_samples, 2));
+    printf("  rank %d of 2, condition number %s\r\n",
+           info.rank, f2s(a, sizeof a, info.cond, 2));
 
     if (!layout->measured) {
         printf("  NOTE: this layout is nominal, not calipered. Bearings carry "
                "the dimension error.\r\n");
     }
     if (info.cond > LOC_POOR_COND) {
-        printf("  WARNING: condition number above %.1f, so some bearings are "
-               "much less accurate than others.\r\n", (double)LOC_POOR_COND);
+        printf("  WARNING: condition number above %s, so some bearings are "
+               "much less accurate than others.\r\n",
+               f2s(a, sizeof a, LOC_POOR_COND, 2));
     }
 
     if (result->status != LOC_OK) {
@@ -358,13 +404,13 @@ void Localize_Report(const loc_result_t *result)
         return;
     }
 
-    printf("transient at %lu, onset %lu, peak/noise %.1f\r\n",
+    printf("transient at %lu, onset %lu, peak/noise %s\r\n",
            (unsigned long)result->peak, (unsigned long)result->onset,
-           (double)result->snr_ratio);
+           f2s(a, sizeof a, result->snr_ratio, 2));
     if (result->weak_transient) {
-        printf("  WARNING: weak transient (below %.1f). Clap harder or "
+        printf("  WARNING: weak transient (below %s). Clap harder or "
                "closer; delays from this capture will be noisy.\r\n",
-               (double)LOC_WEAK_SNR);
+               f2s(a, sizeof a, LOC_WEAK_SNR, 2));
     }
 
     printf("window %lu..%lu (%d samples)\r\n",
@@ -375,19 +421,19 @@ void Localize_Report(const loc_result_t *result)
     for (int p = 0; p < LOC_NUM_PAIRS; p++) {
         int i, j;
         Geom_Pair(p, &i, &j);
-        printf("  %d-%d      %+8.3f        %6.2f%s\r\n",
+        printf("  %d-%d      %9s        %7s%s\r\n",
                i, j,
-               (double)result->pair_delay[p],
-               (double)result->pair_max_tau[p],
+               f2s(a, sizeof a, result->pair_delay[p], 3),
+               f2s(b, sizeof b, result->pair_max_tau[p], 2),
                result->pair_exceeds_physics[p] ? "   EXCEEDS PHYSICS" : "");
     }
 
-    printf("worst triangle residual %.3f samples%s\r\n",
-           (double)result->worst_triangle_residual,
+    printf("worst triangle residual %s samples%s\r\n",
+           f2s(a, sizeof a, result->worst_triangle_residual, 3),
            (result->worst_triangle_residual > 0.3f)
                ? "   (inconsistent: suspect a reflection)" : "");
 
-    printf("BEARING %.2f deg\r\n", (double)result->bearing_deg);
+    printf("BEARING %s deg\r\n", f2s(a, sizeof a, result->bearing_deg, 2));
     printf("  (counterclockwise from +x, which points toward the mic1/mic3\r\n"
            "   edge; 90 deg is off the mic0/mic1 edge)\r\n");
     printf("--- end ---\r\n");

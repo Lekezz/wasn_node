@@ -30,10 +30,24 @@
    stored in (i.e. after >>8). After warm-up, the first frame with any sample
    past this level is taken as the clap and becomes sample 0 of the stored
    second. This is what removes the need to time your clap: the array listens
-   as long as it takes, then places the 1 s buffer on the clap. Room noise
-   sits well under 1000 and a clap peaks near 15000, so 2500 has wide margin.
-   Raise it if noise trips the trigger, lower it if a real clap never does. */
-#define TRIGGER_LEVEL  2500
+   as long as it takes, then places the 1 s buffer on the clap.
+
+   Was 2500, sized when the array sat 65 cm from a wall and claps peaked near
+   15000. Moving it to 2.1 m of clearance removed the reflection that had been
+   adding energy back into the mics, and the same clap then peaked at only
+   4444: a margin of 1.8x, and the very next trial failed to trigger at all.
+   The board simply kept listening, so the capture script timed out with no
+   explanation of why.
+
+   1000 is chosen against the measured noise floor rather than a guess. Room
+   noise on the quiet 2.1 m setup is RMS 10 to 18 per mic, so noise peaks sit
+   around 100 to 200. That leaves 5 to 10x headroom above noise while giving a
+   4444-peak clap 4.4x margin instead of 1.8x. (The older "noise sits under
+   1000" figure was inflated by the DC drift that find_clap now removes.)
+
+   Raise it if room noise starts tripping the trigger, lower it if a real clap
+   never does. The symptom of "too high" is a green LED that stays on. */
+#define TRIGGER_LEVEL  1000
 
 /* --- handles owned by the generated code (main.c and the BSP) ------------- */
 extern DFSDM_Filter_HandleTypeDef hdfsdm1_filter0;

@@ -60,9 +60,14 @@ Supervisor: Ben. Owner: Leke (undergrad EE). Reference design: SpeechCompass
   counter keeps them identical and channel alignment is untouched.
 - Capture is CLAP-TRIGGERED, so you no longer time the clap. Button press
   arms the array (green LED); it discards the warm-up, then LISTENS
-  indefinitely; the first frame with any sample past TRIGGER_LEVEL (2500,
-  int16 domain after >>8) becomes sample 0 of the stored second. Room noise
-  sits under 1000, a clap peaks near 15000, so 2500 has wide margin. Green
+  indefinitely; the first frame with any sample past TRIGGER_LEVEL (1000,
+  int16 domain after >>8) becomes sample 0 of the stored second. Measured
+  room noise is RMS 10 to 18 per mic (peaks 100 to 200), so 1000 keeps 5 to
+  10x headroom. It was 2500 until 2026-07-27: that was sized when the array
+  sat 65 cm from a wall and claps peaked near 15000, but with the wall
+  reflection gone the same clap peaks near 4400 and 2500 was too close to
+  the signal. A trigger set too high shows up as a green LED that never goes
+  out and a capture script that times out with no other symptom. Green
   LED covers both listening and storing, so there is no visual cue for the
   exact trigger instant. The four channels are handled as one synchronized
   frame (act only when all four DMA flags of a phase are up, treat all four

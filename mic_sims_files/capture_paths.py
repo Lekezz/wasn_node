@@ -79,6 +79,18 @@ def trial_wav(session, tag, k, mic):
     return os.path.join(wav_dir(session, tag), f"trial{k}_mic{mic}.wav")
 
 
+def trial_report(session, tag, k):
+    """
+    Path of trial k's on-board bearing report.
+
+    The board prints this after the raw dump. It is saved next to the data so
+    a trial carries the firmware's own answer alongside the samples that
+    produced it, which is what makes embedded-versus-Python comparison
+    possible after the fact instead of only while watching the terminal.
+    """
+    return os.path.join(angle_dir(session, tag), f"trial{k}_bearing.txt")
+
+
 def next_trial_number(session, tag):
     """
     First unused trial index for this angle, so rerunning the command adds
