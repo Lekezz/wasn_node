@@ -1,109 +1,125 @@
-# Adding CMSIS-DSP to the project
+# CMSIS-DSP in this project
 
-The on-board localization needs a 4096-point real FFT. That comes from
-CMSIS-DSP, which is **not** in the project yet: `Drivers/CMSIS/` currently
-holds only `Device`, `Include` and the licence file.
+The on-board localization needs a 4096-point real FFT, which comes from
+CMSIS-DSP. This document records how it got here and what to do if it ever
+needs changing.
 
-Until this is done, `Core/Src/fft_backend.c` will fail to compile with
+**Status: done.** Nothing is required of you to build. This is reference.
 
-```
-fatal error: arm_math.h: No such file or directory
-```
+## What was done, and why not the CubeMX route
 
-That is the expected failure, and it is confined to that one file on purpose.
-Everything else in the pipeline (`gcc_phat.c`, `localize.c`,
-`array_geometry.c`) has no CMSIS dependency and compiles today.
+The obvious path is Software Packs > Select Components in CubeMX. That was
+tried and abandoned for two reasons.
 
-## Commit first
+The only pack available locally that carries CMSIS-DSP is
+**FP-SNS-STAIOTCFT**, an AI/IoT function pack. Selecting its CMSIS DSP entries
+also switched on a USB Device CDC stack, a USB Device core, an AI_INERTIAL
+application, PnPL and a pre-processing library. All of that would have landed
+in the project and competed for the RAM the capture buffers need.
 
-CLAUDE.md: commit before and after every CubeMX regeneration, so `git diff`
-shows exactly what the generator changed. It has silently reverted DMA mode to
-Normal and DMA width to Byte twice. Adding a software pack is a regeneration.
+Beyond that, going through CubeMX means a regeneration, and CLAUDE.md records
+that regeneration has silently reverted DFSDM DMA settings twice. The
+localization work also depends on a hand-added `.ram2` section in the linker
+script, which a regeneration can drop.
 
-```
-git add -A
-git commit -m "Before adding CMSIS-DSP"
-```
+So instead the needed files were copied out of that pack into
+`mic_test/Middlewares/CMSIS_DSP/`. No regeneration, no USB stack, and no
+future CubeMX run can revert it. The `.ioc` was reverted to its committed
+state and is untouched.
 
-## Add the pack
+## What was copied
 
-1. Open `mic_test/mic_test.ioc` in STM32CubeIDE.
-2. Menu: **Software Packs > Select Components** (or `Alt+O`).
-3. Expand **CMSIS** > **DSP**. Tick the **DSP Library** component.
-   Select the **Library** variant if offered a choice of Library vs Source;
-   Source also works and is easier to step through in the debugger.
-4. **OK**, then regenerate (`Alt+K` or Project > Generate Code).
-
-If the DSP component is not listed, install it first through
-**Help > Manage Embedded Software Packages > STMicroelectronics**, or use the
-CMSIS pack entry, then repeat step 2.
-
-## Verify the generator did not undo anything
-
-This is the step that matters, and the reason for the commit above.
+Source pack: `~/STM32Cube/Repository/Packs/STMicroelectronics/FP-SNS-STAIOTCFT/1.1.0/Drivers/CMSIS/DSP`
 
 ```
-git diff --stat
-git diff mic_test/mic_test.ioc
+Middlewares/CMSIS_DSP/
+    Inc/
+        arm_math.h
+        arm_common_tables.h        <- locally modified, see below
+        arm_const_structs.h
+        cmsis_dsp_config.h         <- ours, not upstream
+    Src/
+        arm_rfft_fast_f32.c        arm_rfft_fast_init_f32.c
+        arm_cfft_f32.c             arm_cfft_radix8_f32.c
+        arm_bitreversal2.c
+        arm_common_tables.c        arm_const_structs.c
 ```
 
-Check specifically that all four DFSDM filters still read
-`DMA_CIRCULAR` and `WORD` on both sides:
+That is the complete dependency set for `arm_rfft_fast_f32`. It was verified
+by linking: the only unresolved symbols across the whole pipeline are libc and
+libm (`atan2f`, `sqrtf`, `printf`, `memset`), which the project already
+provides.
+
+## The one local modification
+
+`arm_common_tables.h` has an added `#include "cmsis_dsp_config.h"` near the
+top, before its `ARM_FFT_ALLOW_TABLES` guard. It is commented in place.
+
+This matters more than it sounds. Compiled whole, `arm_common_tables.c` is
+**707 KB**, larger than this part's entire 512 KB of flash, because it holds
+twiddle and bit-reversal tables for every FFT length and every data type. The
+generic `arm_rfft_fast_init_f32()` dispatcher references all of them, so
+`--gc-sections` cannot drop the unused ones.
+
+`cmsis_dsp_config.h` turns on CMSIS-DSP's own `ARM_DSP_CONFIG_TABLES` mode and
+names only the three tables a 4096-point real FFT needs. Result:
+
+| | before | after |
+|---|---|---|
+| `arm_common_tables.o` | 707 KB | 40 KB |
+| whole DSP set | 712 KB | 44 KB |
+
+Note that a 4096-point *real* FFT is internally a 2048-point *complex* FFT,
+which is why two of the three defines say 2048. If `LOC_FFT_LEN` in
+`loc_config.h` ever changes, the table defines must follow; the rule is in the
+comments of `cmsis_dsp_config.h`. Getting it wrong is a clean boot-time
+failure (`Localize_Init()` reports it), not a wrong answer.
+
+## Project integration
+
+`.cproject` gained four lines, two per build configuration:
+
+```xml
+<listOptionValue builtIn="false" value="../Middlewares/CMSIS_DSP/Inc"/>
+<entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="Middlewares"/>
+```
+
+The first puts the headers on the include path; the second makes CDT compile
+the folder at all, since `sourceEntries` previously listed only `Core` and
+`Drivers`. Both Debug and Release were updated identically.
+
+## Verified
+
+Built with the ARM toolchain at `-O2 -ffunction-sections -fdata-sections`,
+linked against the project's real linker script:
+
+```
+flash image           55,712 bytes   (of 512 KB)
+.ram2                 49,152 bytes   at 0x20030000, of RAM2's 64 KB
+```
+
+`.ram2` carries only the `ALLOC` flag, exactly like `.bss`, so the 48 KB of FFT
+buffers cost **zero flash**. That is the `(NOLOAD)` in the linker script doing
+its job, and it was confirmed by measuring the `.bin`.
+
+## If CMSIS-DSP ever needs replacing
+
+`Core/Inc/fft_backend.h` is a four-function interface and `fft_backend.c` is
+about forty lines. It is the only file in the project that includes
+`arm_math.h`. Any real FFT can sit behind it, including a self-contained
+radix-2 implementation with no external dependency, without touching
+`gcc_phat.c`, `localize.c` or `array_geometry.c`.
+
+## If you ever do run CubeMX again
+
+Commit first, then afterwards check that the generator did not undo anything:
 
 ```
 grep -E "Dma.DFSDM1_FLT[0-3].*(Mode|DataAlignment)" mic_test/mic_test.ioc
-```
-
-Expected, twelve lines, one `Mode` and two `DataAlignment` per filter:
-
-```
-Dma.DFSDM1_FLT0.0.MemDataAlignment=DMA_MDATAALIGN_WORD
-Dma.DFSDM1_FLT0.0.Mode=DMA_CIRCULAR
-Dma.DFSDM1_FLT0.0.PeriphDataAlignment=DMA_PDATAALIGN_WORD
-... same for FLT1, FLT2, FLT3
-```
-
-Anything reading `DMA_NORMAL` or `..._BYTE` means the generator reverted it.
-Fix it in CubeMX and regenerate before going further.
-
-## Verify the linker script survived
-
-Regeneration can also rewrite `STM32L552ZETXQ_FLASH.ld`, which carries the
-`.ram2` section the FFT buffers live in:
-
-```
 grep -A3 "ram2" mic_test/STM32L552ZETXQ_FLASH.ld
+grep -c "CMSIS_DSP" mic_test/.cproject
 ```
 
-If the section is gone, the link fails with an undefined `.ram2` placement.
-That is the intended failure mode: loud at build time rather than silent at run
-time. Restore it from git:
-
-```
-git checkout mic_test/STM32L552ZETXQ_FLASH.ld
-```
-
-## Then commit again
-
-```
-git add -A
-git commit -m "After adding CMSIS-DSP"
-```
-
-## Build and check the memory fits
-
-The FFT buffers need 48 KB of the 64 KB RAM2 bank. After a successful build:
-
-```
-grep -E "^\.ram2" mic_test/Debug/mic_test.map
-```
-
-Should show 48 KB (0xC000) placed at 0x20030000. The main RAM bank should be
-unchanged at about 159 KB of 192 KB used.
-
-## If you would rather not add the pack
-
-`Core/Inc/fft_backend.h` is a four-function interface, and `fft_backend.c` is
-about forty lines. Any real FFT can sit behind it, including a self-contained
-radix-2 implementation with no external dependency. Nothing above that file
-knows or cares which one is in use.
+All twelve DMA lines must read `DMA_CIRCULAR` and `WORD`; the `.ram2` section
+must still be there; `.cproject` must still show 4 CMSIS_DSP references.
+Anything missing, restore it with `git checkout <file>`.
