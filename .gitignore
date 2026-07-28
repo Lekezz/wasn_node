@@ -42,3 +42,7 @@ HANDOFF.md
 .claude/
 docs/CMSIS_DSP_SETUP.md
 docs/supervisor-update-2026-07-22.md
+
+# Presentation deck: kept local while it is being reworked. Delete this
+# line to publish it again.
+docs/summer-presentation.pptx
