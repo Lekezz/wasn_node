@@ -6,20 +6,27 @@ array_geometry.py is the single source of truth for geometry. Every script
 that reads or writes a capture goes through here, so the layout can change
 in one place instead of four.
 
-Layout written by catch_audio4.py:
+Layout written by catch_audio4.py and run_session.py:
 
     mic_sims_files/captures/
         2026-07-24-wall-2m/            <- one session (one sitting at the bench)
             notes.txt                  <- date, port, geometry, your --notes text
+            quality_log.txt            <- one line per trial run_session.py took
             angle000/
                 trial1.npy             <- the (4, N) array the analysis reads
                 trial2.npy
+                rejected1.npy          <- a trial you retook, kept but excluded
                 wav/                   <- listening copies, not used by analysis
                     trial1_mic0.wav
                     trial1_mic1.wav
                     ...
             angle045/
                 ...
+
+Rejected trials keep their samples but lose the trial name. Everything that
+looks for data globs trial*.npy, so a file called rejected1.npy is invisible
+to the analysis without any script needing to know the rule. Nothing is
+deleted, because a bad capture is still evidence about the room.
 
 Why the split: the .npy is the data, the .wav files are only there so you can
 listen to a trial and hear whether the clap was clean. Keeping the wavs in
@@ -36,6 +43,7 @@ mic_sims_files) are still found by discovery below, so old data and the
 archived milestone captures keep working.
 """
 
+import datetime
 import glob
 import os
 import re
@@ -102,6 +110,92 @@ def next_trial_number(session, tag):
         if m:
             highest = max(highest, int(m.group(1)))
     return highest + 1
+
+
+def rejected_npy(session, tag, n):
+    """
+    Path of the nth rejected capture for this angle.
+
+    A retake has to leave the bad capture somewhere, and the two obvious
+    options are both wrong: deleting it throws away evidence about the room,
+    and leaving it as trial<K>.npy puts a clap you already judged bad into
+    the plot. Renaming solves both. The number here counts rejects, not
+    trials, so trial numbering stays dense (trial1..trial5) no matter how
+    many retakes it took to get there.
+    """
+    return os.path.join(angle_dir(session, tag), f"rejected{n}.npy")
+
+
+def rejected_wav(session, tag, n, mic):
+    """Listening copy of a rejected capture."""
+    return os.path.join(wav_dir(session, tag), f"rejected{n}_mic{mic}.wav")
+
+
+def rejected_report(session, tag, n):
+    """The board's own report for a rejected capture."""
+    return os.path.join(angle_dir(session, tag), f"rejected{n}_bearing.txt")
+
+
+def next_reject_number(session, tag):
+    """First unused reject index for this angle."""
+    highest = 0
+    for path in glob.glob(os.path.join(angle_dir(session, tag),
+                                       "rejected*.npy")):
+        m = re.search(r"rejected(\d+)\.npy$", os.path.basename(path))
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return highest + 1
+
+
+def notes_path(session):
+    """The session's notes.txt, which records what the room looked like."""
+    return os.path.join(session_dir(session), "notes.txt")
+
+
+def append_session_note(session, line, extra=None):
+    """
+    Add a timestamped line to the session's notes.txt, creating the file and
+    its heading the first time.
+
+    Both catch_audio4.py and run_session.py write this, which is why it lives
+    here rather than in either of them.
+    """
+    os.makedirs(session_dir(session), exist_ok=True)
+    path = notes_path(session)
+    fresh = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8") as f:
+        if fresh:
+            f.write(f"session {session}\n")
+            f.write("=" * (8 + len(session)) + "\n\n")
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        f.write(f"[{stamp}] {line}\n")
+        if extra:
+            f.write(f"    {extra}\n")
+        f.write("\n")
+    return path
+
+
+def quality_log_path(session):
+    """
+    The session's quality_log.txt.
+
+    Every trial run_session.py records gets one line here, kept or rejected,
+    so the reason a capture was retaken survives past the terminal scroll.
+    """
+    return os.path.join(session_dir(session), "quality_log.txt")
+
+
+def append_quality_log(session, line):
+    """Append one already-formatted line to the session quality log."""
+    os.makedirs(session_dir(session), exist_ok=True)
+    path = quality_log_path(session)
+    fresh = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8") as f:
+        if fresh:
+            f.write("when              angle     file          verdict    "
+                    "detail\n")
+        f.write(line.rstrip() + "\n")
+    return path
 
 
 def _angle_from(text):

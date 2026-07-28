@@ -1,22 +1,23 @@
 import argparse
 import datetime
 import os
-import time
-import serial
-import wave
+
 import numpy as np
 
 import capture_paths as cp
+import wav4_stream as ws
 
-# 4-channel capture. The firmware dumps, in order:
-#   8-byte header: b"WAV4" + 4-byte little-endian per-channel byte count
-#   then the four channels back to back (mic0, mic1, mic2, mic3),
-#   each one that many bytes of raw int16 samples.
-# We sync on the "WAV4" magic instead of reading a fixed count, so any
-# boot text or partial buffer left in the stream is skipped cleanly.
+# 4-channel capture, one trial at a time. The wire format lives in
+# wav4_stream.py, which run_session.py uses as well, so there is only one
+# piece of code that knows what the board's bytes mean.
+#
+# For a whole sweep, use run_session.py instead: it walks the angles, prompts
+# you between them, and checks each trial before you move on. This script is
+# the by-hand version and its command line has not changed.
 
 parser = argparse.ArgumentParser(
-    description="Capture 4-channel recordings from the board over serial.")
+    description="Capture 4-channel recordings from the board over serial. "
+                "For a whole angle sweep use run_session.py instead.")
 parser.add_argument("port", nargs="?", default="COM4",
                     help="serial port (default COM4), e.g. COM7")
 parser.add_argument("--tag", default=None,
@@ -52,100 +53,29 @@ if args.trials > 1 and not args.tag:
 SESSION = args.session or datetime.date.today().isoformat()
 
 PORT = args.port
-BAUD = 115200
-SAMPLE_RATE = 16000
-NUM_MICS = 4
-MAGIC = b"WAV4"
+SAMPLE_RATE = ws.SAMPLE_RATE
+NUM_MICS = ws.NUM_MICS
 
 # Recorded into notes.txt so a session says which array layout produced it.
 # Imported lazily-ish here (not at top) only to keep the import list tidy.
 import array_geometry as _geom      # noqa: E402
 GEOMETRY = _geom.ACTIVE
 
-# read timeout has to cover four channels at 115200 baud. One second of
-# audio is 32000 bytes/channel, 128000 bytes total, about 11 s to send.
-# 90 s leaves plenty of room for you to press the button after starting.
-ser = serial.Serial(PORT, BAUD, timeout=90)
-
-
-def read_exact(port, n):
-    """Read exactly n bytes or return whatever arrived before timeout."""
-    buf = bytearray()
-    while len(buf) < n:
-        chunk = port.read(n - len(buf))
-        if not chunk:            # timeout, give up with a short buffer
-            break
-        buf.extend(chunk)
-    return bytes(buf)
-
-
-def sync_to_magic(port, magic):
-    """Slide a window over the stream until the magic bytes appear."""
-    window = bytearray()
-    while True:
-        b = port.read(1)
-        if not b:                # timed out before we ever saw the magic
-            return False
-        window.extend(b)
-        if len(window) > len(magic):
-            del window[0]        # keep only the last len(magic) bytes
-        if window == magic:
-            return True
-
-
-def read_report(port, overall_timeout=8.0):
-    """
-    Read the localizer's text report that the board prints after the raw dump.
-
-    The firmware sends the WAV4 payload first and only then the report, so by
-    the time this is called the audio is already safely read and nothing here
-    can corrupt it. Reading it matters because only one process can hold the
-    COM port: without this you would have to choose between capturing the data
-    and seeing the board's own answer.
-
-    Stops at the report's "--- end ---" marker, or when the board goes quiet,
-    or at overall_timeout. Returns a list of lines, empty if the firmware
-    produced nothing (an older build, or Localize_Init having failed).
-    """
-    previous_timeout = port.timeout
-    port.timeout = 0.5              # short, so silence is detected quickly
-    lines = []
-    deadline = time.time() + overall_timeout
-    try:
-        while time.time() < deadline:
-            raw = port.readline()
-            if not raw:
-                if lines:
-                    break           # it spoke, then stopped: report is done
-                continue            # still thinking, keep waiting
-            line = raw.decode("ascii", errors="replace").rstrip("\r\n")
-            lines.append(line)
-            if "--- end ---" in line:
-                break
-    finally:
-        port.timeout = previous_timeout
-    return lines
+ser = ws.open_port(PORT)
 
 
 def write_session_notes():
     """
     Record what the room looked like for this session. Written once when the
     session folder is created, and appended to if you pass --notes again on a
-    later run, so the history of a sitting stays in one place.
+    later run, so the history of a sitting stays in one place. The formatting
+    lives in capture_paths because run_session.py writes the same file.
     """
-    path = os.path.join(cp.session_dir(SESSION), "notes.txt")
-    fresh = not os.path.exists(path)
-    with open(path, "a", encoding="utf-8") as f:
-        if fresh:
-            f.write(f"session {SESSION}\n")
-            f.write("=" * (8 + len(SESSION)) + "\n\n")
-        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-        f.write(f"[{stamp}] port {PORT}, {SAMPLE_RATE} Hz, "
-                f"{NUM_MICS} mics, geometry {GEOMETRY}\n")
-        if args.notes:
-            f.write(f"    {args.notes}\n")
-        f.write("\n")
-    return path
+    return cp.append_session_note(
+        SESSION,
+        f"port {PORT}, {SAMPLE_RATE} Hz, {NUM_MICS} mics, "
+        f"geometry {GEOMETRY}",
+        args.notes)
 
 
 def paths_for(tag, k):
@@ -173,35 +103,11 @@ def capture_once(tag, k):
     ser.reset_input_buffer()     # drop boot text / stale bytes; idle = nothing
     print("Ready. Press the blue button on the board now...")
 
-    if not sync_to_magic(ser, MAGIC):
-        print("Never saw the WAV4 header. Did the recording finish?")
+    cap = ws.read_capture(ser)
+    if cap is None:
         return None
 
-    length_bytes = read_exact(ser, 4)
-    if len(length_bytes) < 4:
-        print("Short read on the length field.")
-        return None
-
-    nbytes = int.from_bytes(length_bytes, "little")   # per-channel byte count
-    nsamples = nbytes // 2
-    print(f"Header OK. {NUM_MICS} channels of {nbytes} bytes "
-          f"({nsamples} samples each).")
-
-    channels = []
-    for m in range(NUM_MICS):
-        data = read_exact(ser, nbytes)
-        if len(data) < nbytes:
-            print(f"Short read on mic{m}: got {len(data)} of {nbytes} bytes.")
-            return None
-        channels.append(np.frombuffer(data, dtype="<i2"))   # LE int16
-
-        with wave.open(wav_for(m), "wb") as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(SAMPLE_RATE)
-            w.writeframes(data)
-
-    cap = np.stack(channels, axis=0)
+    ws.save_wavs(cap, wav_for)
     np.save(npy_name, cap)
 
     # Quick quality hint so a dud trial gets caught now, not at plot time.
@@ -217,7 +123,7 @@ def capture_once(tag, k):
     # The board localizes the capture it just sent and prints the result. Show
     # it and keep it beside the samples, so a trial carries the firmware's own
     # answer and can be compared against localize_capture.py later.
-    report = read_report(ser)
+    report = ws.read_report(ser)
     if report:
         print("  --- board's own bearing ---")
         for line in report:
@@ -253,10 +159,15 @@ if args.tag:
     print(f"\nDone. Saved {saved} trial(s) for {args.tag} in session "
           f"{SESSION}.")
     if saved:
-        print("Check this angle now:   python check_sync.py")
+        angle_text = args.tag.replace("angle", "").lstrip("0") or "0"
+        print(f"Check this angle now:   python trial_quality.py --true-angle "
+              f"{angle_text}")
+        print("                        python check_sync.py")
         print("                        python localize_capture.py --true-angle "
-              f"{args.tag.replace('angle', '').lstrip('0') or '0'}")
+              f"{angle_text}")
         print("When the sweep is done: python plot_validation.py")
+        print("For a whole sweep with the checks built in: python "
+              "run_session.py")
 else:
     # Legacy single capture: loose mic0.wav.. and capture.npy, overwritten.
     if capture_once(None, 1) is None:

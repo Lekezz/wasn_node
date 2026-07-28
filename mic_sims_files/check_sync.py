@@ -66,6 +66,17 @@ SYNC_TOLERANCE = APERTURE_SAMPLES + SYNC_SLACK
 WINDOW_BEFORE = 256
 WINDOW_AFTER = 1792
 
+# A sample this large is at or past the int16 rail, so the true peak was
+# taller than the converter could represent and the peak position is a
+# guess. 32767 is the rail itself; a little margin catches a waveform that
+# flattened just below it.
+CLIP_LEVEL = 32700
+
+# Below this AC rms a channel is not hearing anything. Room noise measures
+# rms 10 to 18 per mic, so 5 is comfortably under a live but quiet mic and
+# far above a dead one, which sits near zero.
+SILENT_RMS = 5.0
+
 
 def load_capture(path):
     cap = np.load(path)
@@ -74,9 +85,15 @@ def load_capture(path):
     return cap.astype(np.float64)
 
 
-def channel_health(cap):
+def channel_stats(cap):
     """
-    Print per channel level stats and flag anything obviously wrong.
+    Per channel level numbers, one dict per mic: rms, peak, dc, clipped.
+
+    Split out of channel_health() below so the bench-side quality check in
+    trial_quality.py can judge a channel using exactly these numbers instead
+    of computing its own. Two copies of "is this mic alive" would eventually
+    disagree, and the one you were not looking at would be the one that was
+    right.
 
     Everything here is computed with DC removed first. That is not a
     detail: a loud clap leaves a DC excursion that decays over several
@@ -85,18 +102,29 @@ def channel_health(cap):
     channels look like they have a 2x gain mismatch. Measure AC or the
     numbers lie.
     """
+    stats = []
+    for sig in cap:
+        dc = float(np.mean(sig))
+        ac = sig - dc
+        stats.append({
+            "rms": float(np.sqrt(np.mean(ac ** 2))),
+            "peak": float(np.max(np.abs(ac))),
+            "dc": dc,
+            "clipped": int(np.sum(np.abs(sig) >= CLIP_LEVEL)),
+        })
+    return stats
+
+
+def channel_health(cap):
+    """Print the per channel stats and flag anything obviously wrong."""
     print("channel health (DC removed before rms and peak)")
     print("  mic    rms     peak     mean(DC)   clipped")
     problems = []
-    for m, sig in enumerate(cap):
-        dc = float(np.mean(sig))
-        ac = sig - dc
-        rms = float(np.sqrt(np.mean(ac ** 2)))
-        peak = float(np.max(np.abs(ac)))
-        clipped = int(np.sum(np.abs(sig) >= 32700))
+    for m, s in enumerate(channel_stats(cap)):
+        rms, peak, dc, clipped = s["rms"], s["peak"], s["dc"], s["clipped"]
         print(f"  {m}   {rms:8.1f} {peak:8.0f} {dc:10.1f} {clipped:9d}")
 
-        if rms < 5.0:
+        if rms < SILENT_RMS:
             problems.append(f"mic{m} is essentially silent (rms {rms:.1f}). "
                             f"Check DOUT wiring, SEL level, and that this "
                             f"filter's channel edge matches the SEL level.")

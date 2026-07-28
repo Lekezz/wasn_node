@@ -8,6 +8,7 @@ __pycache__/
 
 # 4-mic capture outputs, loose legacy form (no --tag, overwritten each run)
 capture.npy
+capture_bearing.txt
 mic0.wav
 mic1.wav
 mic2.wav
@@ -21,10 +22,12 @@ angle*_mic*.wav
 validation_plot.png
 
 # Session capture data. Audio is bulky and re-recordable, so the raw trials
-# and the listening copies stay out of git, but notes.txt and README.md are
-# tracked: they are the provenance of a session (room setup, wall distance,
-# what the capture showed) and cannot be regenerated from the board.
+# and the listening copies stay out of git, but notes.txt, quality_log.txt
+# and README.md are tracked: they are the provenance of a session (room
+# setup, wall distance, which trials were retaken and why) and cannot be
+# regenerated from the board.
 mic_sims_files/captures/**/trial*.npy
+mic_sims_files/captures/**/rejected*.npy
 mic_sims_files/captures/**/wav/
 mic_sims_files/captures/**/*.wav
 
