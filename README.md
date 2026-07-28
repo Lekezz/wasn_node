@@ -96,8 +96,10 @@ mic_sims_files/
   plot_validation.py             estimated vs true bearing plot
   captures/<session>/angle<NNN>/ recorded trials, grouped by room setup then angle
 docs/
-  CMSIS_DSP_SETUP.md             how CMSIS-DSP was vendored and why not via CubeMX
-  supervisor-update-2026-07-22.md
+  summer-writeup-2026.md         full project writeup: method, results, what is unfinished
+  presentation-outline.md        slide-by-slide content and speaker notes
+  make_presentation.py           builds the deck and its figures
+  summer-presentation.pptx       the deck, 21 slides
 ```
 
 ## Usage

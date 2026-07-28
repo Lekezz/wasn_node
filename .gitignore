@@ -34,3 +34,11 @@ mic_sims_files/captures/**/*.wav
 # ignored means an absent-minded "git add ." cannot put them back.
 CLAUDE.md
 HANDOFF.md
+
+# Internal tooling and working notes, deliberately not published. The hook
+# in .claude/ guards the .ioc against accidental edits, CMSIS_DSP_SETUP.md
+# records how CMSIS-DSP was vendored, and the supervisor update is a draft
+# for one meeting. All are kept locally, none belong in the public repo.
+.claude/
+docs/CMSIS_DSP_SETUP.md
+docs/supervisor-update-2026-07-22.md
