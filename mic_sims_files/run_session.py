@@ -243,8 +243,13 @@ def run_angle(port, session, tag, angle, target, counts):
               "want to redo it.")
         return "next"
 
-    print(f"Put the source at {angle:.0f} degrees, 1 m or more out, at array "
-          f"height.")
+    # 1.5 m, not 1 m. The plane-wave model needs roughly 2*D^2/lambda of
+    # distance, which for this 13.55 cm aperture is 0.86 m at 8 kHz, and a
+    # clap has real energy up that high. Distance also cuts the angular error
+    # from imprecise hand placement: 5 cm of it is 7 deg at 40 cm but under
+    # 2 deg at 1.5 m.
+    print(f"Put the source at {angle:.0f} degrees, 1.5 m or more out, at "
+          f"array height.")
     print("0 deg is off the mic1/mic3 edge, 90 deg is off the mic0/mic1 "
           "edge, counterclockwise.")
     answer = ask("Press Enter when it is in place  "

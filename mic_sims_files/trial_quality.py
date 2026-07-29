@@ -212,8 +212,25 @@ def assess(cap, true_angle=None):
                    stats, true_angle)
 
 
+USAGE = """\
+trial_quality.py: is this capture good enough to keep?
+
+  python trial_quality.py [capture.npy] [--true-angle DEG]
+
+  capture.npy    a trial to check. Defaults to the most recent capture.
+  --true-angle   the angle you actually clapped from, so the error is
+                 printed alongside the bearing.
+
+Exits 0 if the capture passes every check, 1 if any check fails. Checks
+clipping, channel health, weak transient, pair delays past what the mic
+spacing allows, and the worst triangle residual.
+"""
+
 if __name__ == "__main__":
     args = list(sys.argv[1:])
+    if "-h" in args or "--help" in args:
+        print(USAGE)
+        raise SystemExit(0)
     true_angle = None
     if "--true-angle" in args:
         k = args.index("--true-angle")

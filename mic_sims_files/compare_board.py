@@ -366,8 +366,25 @@ def _npys_under(root):
                 yield os.path.abspath(os.path.join(dirpath, name))
 
 
+USAGE = """\
+compare_board.py: does the firmware agree with the Python reference?
+
+  python compare_board.py [--session NAME] [PATH ...]
+
+  no arguments   every trial on disk that has a saved board report
+  --session NAME limit to one session folder
+  PATH           a trial .npy, or its angle folder, or a session folder
+
+Compares the board's saved report against the reference run on the same
+samples. Exits 0 when every compared trial passes, 1 otherwise.
+"""
+
+
 def main(argv):
     args = list(argv)
+    if "-h" in args or "--help" in args:
+        print(USAGE)
+        return 0
     session = None
     if "--session" in args:
         k = args.index("--session")
