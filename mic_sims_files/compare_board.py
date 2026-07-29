@@ -64,7 +64,33 @@ import localize_capture as lc
 DELAY_TOL = 0.05        # samples, per pair
 RESIDUAL_TOL = 0.05     # samples, worst triangle residual
 BEARING_TOL = 0.5       # degrees
-SNR_TOL_FRAC = 0.02     # peak/noise ratio, relative
+
+# peak/noise needs its own rule, derived rather than picked.
+#
+# The firmware does not compute a true median. It bins the envelope into
+# LOC_MEDIAN_BINS bins spanning 0..peak and returns the centre of the bin the
+# median falls in, because a real median needs a sort or a second pass over
+# 16000 samples. So its noise estimate is quantized: it can sit up to half a
+# bin, peak/(2*(BINS-1)), away from the exact median numpy computes.
+#
+# That small absolute difference becomes a large difference in the RATIO,
+# because snr = peak/noise and the noise is tiny. Propagating the bound:
+#
+#     |snr_board - snr_py| = snr_board * snr_py * |noise_py - noise_board| / peak
+#                         <= snr^2 / (2 * (BINS - 1))
+#
+# which at snr 200 is about 9.8. A flat percentage cannot express this: the
+# same bin error is negligible at snr 20 and dominant at snr 400. Anything
+# inside this bound is the documented approximation working as intended;
+# anything outside it is a real disagreement.
+#
+# Keep in sync with LOC_MEDIAN_BINS in mic_test/Core/Inc/loc_config.h.
+MEDIAN_BINS = 2048
+
+
+def snr_tolerance(snr):
+    """Largest peak/noise gap the histogram median can produce on its own."""
+    return max(snr * snr / (2.0 * (MEDIAN_BINS - 1)), 0.05)
 
 # Onset, peak and window are integers on both sides and are produced by the
 # same deterministic search, so they are required to match exactly. They did
@@ -301,7 +327,7 @@ def compare_trial(npy_path, report_path):
         Row("window end", board["window"][1] if board["window"] else None,
             native["window"][1], 0, exact=True),
         Row("peak/noise", board["snr"], native["snr"],
-            max(SNR_TOL_FRAC * native["snr"], 0.05)),
+            snr_tolerance(native["snr"])),
     ]
 
     for (i, j) in sorted(pinned["delays"]):

@@ -6,11 +6,11 @@ research project, University of Virginia. The node records a clap on four
 synchronized channels and estimates the direction it came from using TDOA with
 GCC-PHAT, both offline in Python and on the board itself with CMSIS-DSP.
 
-**This project is not finished.** What is described below works and has been
-measured, but the validation set is thin (two angles, and both recorded too
-close to the array), the on-board localizer has not yet printed a bearing on
-hardware, and nothing has been made wireless yet. See "What is not done" at the
-bottom for the honest list.
+**This project is not finished.** The signal path is complete and the embedded
+port now agrees with the reference implementation, but that agreement rests on
+a single capture at one angle, the ground-truthed validation set is still thin,
+and nothing has been made wireless yet. See "What is not done" at the bottom for
+the honest list.
 
 ## What works today
 
@@ -22,18 +22,23 @@ bottom for the honest list.
 | Clap-triggered capture | Working | Board waits for the clap, so it no longer has to be timed |
 | Spaced array built and measured | Working | 9.25 x 9.9 cm, calipered port to port |
 | Offline localization from real claps | Working | +0.58 deg error at 0 deg, 2.1 m from the nearest wall |
-| On-board localization (CMSIS-DSP) | Runs, partly validated | Onset and analysis window match Python exactly; delays and bearing not yet confirmed |
+| On-board localization (CMSIS-DSP) | Validated on one capture | All six delays match Python to 0.000 samples, bearing to 0.002 deg |
 | Guided capture sessions | Working | One command per sweep, quality check and retake at the bench, resumable |
 
 ### Measured result
 
-One clap at a known 0 degrees, array 2.1 m from the nearest wall:
+One clap at a known 0 degrees, array 2.1 m from the nearest wall, source 1.5 m
+out (2026-07-29):
 
-| Quantity | Value |
-|----------|-------|
-| Estimated bearing | 0.58 deg |
-| Error against truth | +0.58 deg |
-| Worst triangle residual | 0.119 samples |
+| Quantity | Board | Python reference |
+|----------|-------|------------------|
+| Estimated bearing | 0.340 deg | 0.338 deg |
+| Error against truth | +0.34 deg | +0.34 deg |
+| Worst triangle residual | 0.118 samples | 0.118 samples |
+
+The board computed that itself, in float32 with CMSIS-DSP, and it agrees with
+the float64 numpy reference on the same samples to 0.002 degrees. All six pair
+delays match to 0.000 samples. That is the embedded port validated end to end.
 
 For comparison, the same array in the same room but 65 cm from a wall gave
 -3.40 deg with a residual of 0.875 samples. The wall reflection was corrupting
@@ -171,17 +176,13 @@ its roughly 1 degree is a clean room ceiling, not a prediction.
 
 ## What is not done
 
-- **The on-board float path is not confirmed yet.** The board's first hardware
-  run printed every float as blank, because the project links
-  `--specs=nano.specs` and its `printf` drops floating point support. That is
-  fixed in firmware by formatting floats with integer arithmetic, and the fix
-  was flashed on 2026-07-29, but no capture has been taken since. So no bearing
-  has yet actually printed from the board, and every capture on disk predates
-  the fix, which is why `compare_board.py` still reports them all as skipped.
-  One capture at a known angle closes this.
-- **The validation set is two angles.** Ground truth exists at 0 and 315
-  degrees only, three trials total, and all of it was recorded with the source
-  40 cm away, which is too close (see the distance note under Usage). The
+- **The port is validated on one capture, at one angle.** 0 degrees is the
+  easiest case: the source sits on the axis where two of the six pairs read
+  near zero. Agreement should hold everywhere, but it has only been shown
+  there, and a sweep is what would prove it.
+- **The ground-truthed validation set is thin.** Three older trials at 0 and
+  315 degrees, all recorded with the source only 40 cm away, which is too close
+  (see the distance note under Usage), plus the one good capture at 0. The
   deliverable plot needs a full sweep at a sensible distance.
 - **No wireless, and only one node.** The "wireless sensor network" part of the
   title is the eventual goal, not something built. A single node estimates a
