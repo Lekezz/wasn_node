@@ -7,9 +7,10 @@ synchronized channels and estimates the direction it came from using TDOA with
 GCC-PHAT, both offline in Python and on the board itself with CMSIS-DSP.
 
 **This project is not finished.** What is described below works and has been
-measured, but the validation set is thin (two angles), the on-board float
-output has not been confirmed since the last firmware fix, and nothing has been
-made wireless yet. See "What is not done" at the bottom for the honest list.
+measured, but the validation set is thin (two angles, and both recorded too
+close to the array), the on-board localizer has not yet printed a bearing on
+hardware, and nothing has been made wireless yet. See "What is not done" at the
+bottom for the honest list.
 
 ## What works today
 
@@ -21,7 +22,8 @@ made wireless yet. See "What is not done" at the bottom for the honest list.
 | Clap-triggered capture | Working | Board waits for the clap, so it no longer has to be timed |
 | Spaced array built and measured | Working | 9.25 x 9.9 cm, calipered port to port |
 | Offline localization from real claps | Working | +0.58 deg error at 0 deg, 2.1 m from the nearest wall |
-| On-board localization (CMSIS-DSP) | Runs, partly validated | Onset and analysis window match Python exactly; delays not yet confirmed |
+| On-board localization (CMSIS-DSP) | Runs, partly validated | Onset and analysis window match Python exactly; delays and bearing not yet confirmed |
+| Guided capture sessions | Working | One command per sweep, quality check and retake at the bench, resumable |
 
 ### Measured result
 
@@ -88,6 +90,10 @@ mic_sims_files/
   localization_sim.py            reference implementation, the thing everything is checked against
   array_geometry.py              layout registry and active selection
   capture_paths.py               where captures live on disk
+  run_session.py                 guided sweep: one command for a whole session
+  trial_quality.py               is this capture good enough to keep
+  wav4_stream.py                 the WAV4 serial protocol, shared by the capture tools
+  replay_source.py               fake serial and fault injection, so the path runs with no board
   catch_audio4.py                4-channel serial capture -> wav + npy + board report
   check_sync.py                  per-channel health and channel alignment
   localize_capture.py            one real capture -> bearing
@@ -97,27 +103,45 @@ mic_sims_files/
   captures/<session>/angle<NNN>/ recorded trials, grouped by room setup then angle
 docs/
   summer-writeup-2026.md         full project writeup: method, results, what is unfinished
-  presentation-outline.md        slide-by-slide content and speaker notes
-  make_presentation.py           builds the deck and its figures
-  summer-presentation.pptx       the deck, 21 slides
+  steps-forward.md               the ordered path from here to a validated result
+  bench-checklist.md             one page to print and keep at the bench
 ```
 
 ## Usage
 
-Recording a clap:
+Recording a session. One command walks the whole sweep, prompts you between
+angles, checks each trial at the bench and offers a retake, and resumes if you
+stop partway:
 
-1. Build and flash `mic_test` from STM32CubeIDE.
-2. `python catch_audio4.py COM4 --tag angle000 --trials 5`, started **before**
-   the button press. Only one process can hold the COM port, so close any
-   serial terminal first.
-3. Press the blue user button. Green LED means armed and listening. Clap once,
-   sharply, at least 1 m away and at array height. Timing does not matter, the
-   board waits.
-4. Blue LED means it is dumping, about 11 s per trial at 115200 baud.
+```
+python run_session.py COM4 --session 2026-07-29-sweep \
+    --angles 0,45,90,135,180,225,270,315 --trials 5 \
+    --notes "wall 2.1 m, clap 1.5 m"
+```
+
+Per trial: press Enter when the source is placed, press the blue user button,
+then clap once, sharply. Green LED means armed and listening, and timing does
+not matter because the board waits for the clap. Blue LED means it is dumping,
+about 11 s per trial at 115200 baud.
+
+Two things that matter more than they look:
+
+- **Start the script before pressing the button.** Only one process can hold
+  the COM port, so close any serial terminal first.
+- **Clap from 1.5 m or more, from a marked spot.** Closer than about 0.9 m puts
+  the top of a clap's band inside the near field, where the plane-wave model the
+  estimator assumes breaks down. Distance also cuts the angular error from
+  imprecise hand placement, which goes as 1/distance: 5 cm of it is 7 degrees at
+  40 cm but under 2 degrees at 1.5 m.
+
+`python catch_audio4.py COM4 --tag angle000 --trials 5` still records a single
+angle by hand if you want it.
 
 Analysis:
 
 ```
+python run_session.py --summary --session NAME   # progress, opens no COM port
+python trial_quality.py --true-angle 0           # re-check the newest capture
 python check_sync.py          # are the four channels healthy and aligned
 python localize_capture.py --true-angle 0
 python compare_board.py       # does the firmware agree with the reference
@@ -147,16 +171,18 @@ its roughly 1 degree is a clean room ceiling, not a prediction.
 
 ## What is not done
 
-- **The on-board float path is unverified.** The board's first hardware run
-  printed every float as blank, because the project links `--specs=nano.specs`
-  and its `printf` drops floating point support. That is fixed in firmware by
-  formatting floats with integer arithmetic, but the fix has not been flashed
-  yet, so no bearing has ever actually printed from the board. Until it does,
-  `compare_board.py` reports every trial as skipped.
+- **The on-board float path is not confirmed yet.** The board's first hardware
+  run printed every float as blank, because the project links
+  `--specs=nano.specs` and its `printf` drops floating point support. That is
+  fixed in firmware by formatting floats with integer arithmetic, and the fix
+  was flashed on 2026-07-29, but no capture has been taken since. So no bearing
+  has yet actually printed from the board, and every capture on disk predates
+  the fix, which is why `compare_board.py` still reports them all as skipped.
+  One capture at a known angle closes this.
 - **The validation set is two angles.** Ground truth exists at 0 and 315
-  degrees only, three trials total. The deliverable plot needs a full sweep,
-  and 315 degrees was noticeably worse than 0 in both trials (+2.12 and +6.38
-  deg) for reasons not yet understood.
+  degrees only, three trials total, and all of it was recorded with the source
+  40 cm away, which is too close (see the distance note under Usage). The
+  deliverable plot needs a full sweep at a sensible distance.
 - **No wireless, and only one node.** The "wireless sensor network" part of the
   title is the eventual goal, not something built. A single node estimates a
   bearing; multiple nodes cross-bearing to a position is future work.
