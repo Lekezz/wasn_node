@@ -167,8 +167,8 @@ its roughly 1 degree is a clean room ceiling, not a prediction.
 ## Hardware notes
 
 - Board: NUCLEO-L552ZE-Q, TrustZone disabled.
-- Mics: four Adafruit MP34DT01-M breakouts at 3.3 V.
+- Mics: four MP34DT01-M breakouts at 3.3 V.
 - One clock net (PF10) fans out to all four microphones. Mics 0 and 1 share
   data pin PE7, mics 2 and 3 share PB1. SEL is tied to GND on mics 0 and 2 and
   to 3V3 on mics 1 and 3, which is what separates the two mics sharing a wire.
-- 100 nF decoupling close to each mic VDD, and keep the shared data stubs short.
+- Kept the shared data stubs short.
