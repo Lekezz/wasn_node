@@ -1,0 +1,6 @@
+session 2026-07-29-flash-check
+==============================
+
+[2026-07-29 15:25] port COM4, 16000 Hz, 4 mics, geometry 9.25x9.9-measured, angles 0, 1 trial(s) each
+    post-flash check, wall 2.1 m, clap 1.5 m
+

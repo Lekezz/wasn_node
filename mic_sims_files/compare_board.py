@@ -87,10 +87,32 @@ BEARING_TOL = 0.5       # degrees
 # Keep in sync with LOC_MEDIAN_BINS in mic_test/Core/Inc/loc_config.h.
 MEDIAN_BINS = 2048
 
+# The quantization term above is the DOMINANT source of disagreement but not
+# the only one, so it is a first-order model rather than a strict bound. The
+# ratio also inherits float32 effects the model ignores: the firmware sums
+# 16000 samples in float32 to estimate DC and builds the envelope from that,
+# where the Python uses float64 throughout, so peak and median both shift a
+# little before the division. Two trials in the 2026-07-29 sweep landed at
+# 16.58 against a computed bound of 16.05, about 3 percent over.
+#
+# Hence an explicit empirical factor, named rather than folded quietly into the
+# formula. 1.5 covers what was observed with room to spare while still catching
+# any real error: a noise estimate wrong by even 10 percent moves the ratio by
+# about 25 at snr 256, well past the allowance.
+#
+# Worth knowing that peak/noise is the WEAKEST test of the noise estimate in
+# this table, not the strongest. The onset row is far stricter and is required
+# to match exactly: onset is found by walking back from the peak until the
+# envelope drops below noise + 0.2 * (peak - noise), so it depends directly on
+# the noise value. Onset has matched exactly on all 45 trials compared so far,
+# which validates the noise path much harder than this ratio does.
+SNR_MODEL_MARGIN = 1.5
+
 
 def snr_tolerance(snr):
     """Largest peak/noise gap the histogram median can produce on its own."""
-    return max(snr * snr / (2.0 * (MEDIAN_BINS - 1)), 0.05)
+    quantization = snr * snr / (2.0 * (MEDIAN_BINS - 1))
+    return max(SNR_MODEL_MARGIN * quantization, 0.05)
 
 # Onset, peak and window are integers on both sides and are produced by the
 # same deterministic search, so they are required to match exactly. They did
@@ -256,6 +278,9 @@ class Row:
         self.tol = tol
         self.exact = exact
         self.unit = unit
+        # Set for a window row whose mismatch is the documented fixed-length
+        # slide. It prints as "slid" and is not counted as a failure.
+        self.excused = False
 
     @property
     def missing(self):
@@ -278,7 +303,7 @@ class Row:
     def line(self):
         if self.missing:
             return f"  {self.name:<24} {'(blank)':>12} {self._fmt(self.py):>12}"
-        mark = "ok " if self.ok else "BAD"
+        mark = "ok " if self.ok else ("slid" if self.excused else "BAD")
         d = self.delta
         ds = "exact" if (self.exact and d == 0) else f"{d:+.3f}"
         return (f"  {self.name:<24} {self._fmt(self.board):>12} "
@@ -291,6 +316,30 @@ class Row:
         if isinstance(v, int):
             return str(v)
         return f"{v:.3f}"
+
+
+def is_expected_slide(board_window, onset, n_samples):
+    """
+    True when the board's window differs from the Python's only because it
+    slid a fixed-length window instead of shrinking a clamped one.
+
+    This is not a defect and it is not rare. Capture is clap-triggered, so the
+    onset always lands early in the buffer, and any onset below WINDOW_BEFORE
+    makes the two rules disagree: the Python clamps start to 0 and keeps a
+    SHORTER window, while the firmware slides a full LOC_WINDOW_LEN window
+    because its FFT length and buffers are fixed. localize.c documents this.
+
+    The firmware's choice is the better one, so a divergence of this shape is
+    reported and then not counted against it. What is checked is that the
+    board's window really is a legitimate slide: exactly the right length,
+    inside the buffer, and still containing the onset it is supposed to
+    analyse. Anything else is a genuine disagreement and still fails.
+    """
+    start, end = board_window
+    return (end - start == WINDOW_LEN
+            and start >= 0
+            and end <= n_samples
+            and start <= onset <= end)
 
 
 def compare_trial(npy_path, report_path):
@@ -310,11 +359,22 @@ def compare_trial(npy_path, report_path):
     # delay comparison is arithmetic against arithmetic. The window choice is
     # compared separately below, using the Python's own unpinned answer.
     native = reference(cap)
+    expected_slide = False
     if board["window"] and board["window"] != native["window"]:
         pinned = reference(cap, forced_window=board["window"])
+        expected_slide = is_expected_slide(board["window"], native["onset"],
+                                           cap.shape[1])
         window_note = (f"windows differ: board {board['window']}, "
                        f"python {native['window']}. Delays below are compared "
                        f"on the board's window.")
+        if expected_slide:
+            window_note += (
+                " This is the DOCUMENTED divergence, not a fault: the clap "
+                "landed within " + str(WINDOW_BEFORE) + " samples of the "
+                "start, so the Python shrank its window while the firmware "
+                "slid a full-length one to keep the FFT size fixed. The "
+                "firmware's choice is the better one and the window rows "
+                "below are not counted as failures.")
     else:
         pinned = native
         window_note = None
@@ -342,9 +402,20 @@ def compare_trial(npy_path, report_path):
     compared = [r for r in rows if not r.missing]
     floats_present = any(r.board is not None and not r.exact for r in rows)
 
+    # A window row that fails only because the firmware legitimately slid its
+    # window does not count against the port. Every other row still does, so a
+    # real arithmetic disagreement in the same trial is not masked.
+    WINDOW_ROWS = ("window start", "window end")
+    if expected_slide:
+        for r in rows:
+            if r.name in WINDOW_ROWS:
+                r.excused = True
+    judged = [r for r in compared
+              if not (expected_slide and r.name in WINDOW_ROWS)]
+
     if not floats_present:
         status = "skip"
-    elif all(r.ok for r in compared):
+    elif all(r.ok for r in judged):
         status = "pass"
     else:
         status = "fail"

@@ -1,0 +1,18 @@
+
+--- localization ---
+array 9.25x9.9-measured  span 9.25 x 9.90 cm  aperture 13.55 cm (6.32 samples)
+  rank 2 of 2, condition number 1.07
+transient at 441, onset 431, peak/noise 49.33
+window 175..2223 (2048 samples)
+  pair   delay (samples)   max physical
+  0-1          3.741           4.31
+  0-2         -3.047           4.62
+  0-3         -0.029           6.32
+  1-2         -6.205           6.32
+  1-3         -3.194           4.62
+  2-3          3.103           4.31
+worst triangle residual 0.583 samples   (inconsistent: suspect a reflection)
+BEARING 221.84 deg
+  (counterclockwise from +x, which points toward the mic1/mic3
+   edge; 90 deg is off the mic0/mic1 edge)
+--- end ---

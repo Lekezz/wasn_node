@@ -1,0 +1,7 @@
+when              angle     file          verdict    detail
+2026-07-29 15:42  angle315  trial1        KEPT-FAIL  residual: worst triangle 0.496 samples (need 0.30)
+2026-07-29 15:43  angle315  trial2        KEPT-FAIL  residual: worst triangle 0.600 samples (need 0.30)
+2026-07-29 15:44  angle315  trial3        KEPT-FAIL  residual: worst triangle 0.827 samples (need 0.30)
+2026-07-29 15:44  angle315  trial4        PASS       bearing 316.51 deg, error +1.51 deg, residual 0.161
+2026-07-29 15:45  angle315  trial5        PASS       bearing 316.07 deg, error +1.07 deg, residual 0.144
+(after the fact)  angle315  trial1       REJECTED -> rejected1.npy  array set up slightly wrong and clapped in the wrong spot, confirmed by the pair 1-2 delay

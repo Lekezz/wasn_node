@@ -1,0 +1,52 @@
+when              angle     file          verdict    detail
+2026-07-29 17:32  angle000  rejected1.npy REJECT     residual: worst triangle 0.784 samples (need 0.30)
+2026-07-29 17:32  angle000  trial1        PASS       bearing 358.37 deg, error -1.63 deg, residual 0.176
+2026-07-29 17:34  angle000  rejected2.npy REJECT     transient: peak/noise 6.6 (need 20), onset 847; residual: worst triangle 0.865 samples (need 0.30)
+2026-07-29 17:35  angle000  trial2        KEPT-FAIL  residual: worst triangle 2.498 samples (need 0.30)
+2026-07-29 17:36  angle000  trial3        KEPT-FAIL  residual: worst triangle 0.364 samples (need 0.30)
+2026-07-29 17:39  angle000  trial4        KEPT-FAIL  residual: worst triangle 0.379 samples (need 0.30)
+2026-07-29 17:39  angle000  trial5        PASS       bearing 0.16 deg, error +0.16 deg, residual 0.113
+2026-07-29 17:42  angle045  rejected1.npy REJECT     residual: worst triangle 0.485 samples (need 0.30)
+2026-07-29 17:42  angle045  trial1        KEPT-FAIL  residual: worst triangle 0.762 samples (need 0.30)
+2026-07-29 17:43  angle045  trial2        PASS       bearing 43.68 deg, error -1.32 deg, residual 0.075
+2026-07-29 17:43  angle045  trial3        KEPT-FAIL  residual: worst triangle 0.537 samples (need 0.30)
+2026-07-29 17:44  angle045  trial4        KEPT-FAIL  residual: worst triangle 0.341 samples (need 0.30)
+2026-07-29 17:44  angle045  trial5        KEPT-FAIL  residual: worst triangle 0.817 samples (need 0.30)
+2026-07-29 17:45  angle090  trial1        PASS       bearing 89.52 deg, error -0.48 deg, residual 0.077
+2026-07-29 17:46  angle090  trial2        PASS       bearing 89.93 deg, error -0.07 deg, residual 0.075
+2026-07-29 17:46  angle090  trial3        PASS       bearing 89.20 deg, error -0.80 deg, residual 0.175
+2026-07-29 17:46  angle090  trial4        PASS       bearing 89.65 deg, error -0.35 deg, residual 0.088
+2026-07-29 17:47  angle090  trial5        PASS       bearing 90.86 deg, error +0.86 deg, residual 0.181
+2026-07-29 17:53  angle135  trial1        KEPT-FAIL  residual: worst triangle 1.832 samples (need 0.30)
+2026-07-29 17:54  angle135  trial2        KEPT-FAIL  residual: worst triangle 1.267 samples (need 0.30)
+2026-07-29 17:54  angle135  trial3        PASS       bearing 135.45 deg, error +0.45 deg, residual 0.108
+2026-07-29 17:55  angle135  trial4        NODATA     no data received
+2026-07-29 17:59  angle135  trial4        KEPT-FAIL  residual: worst triangle 1.214 samples (need 0.30)
+2026-07-29 17:59  angle135  trial5        KEPT-FAIL  residual: worst triangle 0.897 samples (need 0.30)
+2026-07-29 18:03  angle180  rejected1.npy REJECT     channels: rms 0/0/0/0, mic0/1/2/3 silent (under 5); transient: peak/noise 0.0 (need 20), onset 0; physics: pair(s) 0-1, 0-2, 0-3, 1-2, 1-3, 2-3 exceed what the spacing allows; residual: worst triangle 8.000 samples (need 0.30)
+2026-07-29 18:06  angle180  rejected2.npy REJECT     residual: worst triangle 0.613 samples (need 0.30)
+2026-07-29 18:06  angle180  trial1        KEPT-FAIL  residual: worst triangle 0.387 samples (need 0.30)
+2026-07-29 18:07  angle180  trial2        PASS       bearing 177.88 deg, error -2.12 deg, residual 0.168
+2026-07-29 18:08  angle180  trial3        NODATA     no data received
+2026-07-29 18:10  angle180  rejected3.npy REJECT     transient: peak/noise 4.3 (need 20), onset 302
+2026-07-29 18:10  angle180  trial3        PASS       bearing 179.50 deg, error -0.50 deg, residual 0.058
+2026-07-29 18:11  angle180  trial4        KEPT-FAIL  residual: worst triangle 0.538 samples (need 0.30)
+2026-07-29 18:12  angle180  trial5        PASS       bearing 179.41 deg, error -0.59 deg, residual 0.094
+2026-07-29 18:15  angle225  trial1        KEPT-FAIL  residual: worst triangle 0.751 samples (need 0.30)
+2026-07-29 18:16  angle225  trial2        PASS       bearing 222.79 deg, error -2.21 deg, residual 0.150
+2026-07-29 18:16  angle225  trial3        PASS       bearing 325.98 deg, error +100.98 deg, residual 0.070
+2026-07-29 18:17  angle225  rejected1.npy REJECT     residual: worst triangle 0.583 samples (need 0.30)
+2026-07-29 18:18  angle225  trial4        KEPT-FAIL  residual: worst triangle 0.542 samples (need 0.30)
+2026-07-29 18:18  angle225  trial5        KEPT-FAIL  residual: worst triangle 0.796 samples (need 0.30)
+2026-07-29 18:19  angle270  trial1        KEPT-FAIL  transient: peak/noise 13.4 (need 20), onset 1023
+2026-07-29 18:19  angle270  trial2        PASS       bearing 269.30 deg, error -0.70 deg, residual 0.102
+2026-07-29 18:20  angle270  trial3        PASS       bearing 269.83 deg, error -0.17 deg, residual 0.023
+2026-07-29 18:20  angle270  trial4        PASS       bearing 269.01 deg, error -0.99 deg, residual 0.083
+2026-07-29 18:21  angle270  trial5        PASS       bearing 269.88 deg, error -0.12 deg, residual 0.049
+2026-07-29 18:22  angle315  rejected1.npy REJECT     physics: pair(s) 0-3 exceed what the spacing allows; residual: worst triangle 2.010 samples (need 0.30)
+2026-07-29 18:24  angle315  trial1        KEPT-FAIL  residual: worst triangle 0.544 samples (need 0.30)
+2026-07-29 18:24  angle315  trial2        KEPT-FAIL  residual: worst triangle 0.744 samples (need 0.30)
+2026-07-29 18:25  angle315  trial3        KEPT-FAIL  residual: worst triangle 0.814 samples (need 0.30)
+2026-07-29 18:25  angle315  trial4        KEPT-FAIL  residual: worst triangle 0.379 samples (need 0.30)
+2026-07-29 18:26  angle315  trial5        KEPT-FAIL  residual: worst triangle 0.670 samples (need 0.30)
+(after the fact)  angle225  trial3       REJECTED -> rejected2.npy  bearing error +100.98 deg exceeds the 10 deg limit for this session

@@ -6,11 +6,12 @@ research project, University of Virginia. The node records a clap on four
 synchronized channels and estimates the direction it came from using TDOA with
 GCC-PHAT, both offline in Python and on the board itself with CMSIS-DSP.
 
-**This project is not finished.** The signal path is complete and the embedded
-port now agrees with the reference implementation, but that agreement rests on
-a single capture at one angle, the ground-truthed validation set is still thin,
-and nothing has been made wireless yet. See "What is not done" at the bottom for
-the honest list.
+**This project is not finished**, but the single-node pipeline now works end to
+end and is validated: a full 8 angle sweep localizes real claps to a mean error
+of 1.11 degrees, and the on-board CMSIS-DSP port agrees with the Python
+reference on all 44 captures compared. What remains is that nothing has been
+made wireless, there is only one node, and only claps have been tested. See
+"What is not done" at the bottom.
 
 ## What works today
 
@@ -21,24 +22,44 @@ the honest list.
 | Channel synchronization | Working | Delays linear in mic position, residual 0.131 samples |
 | Clap-triggered capture | Working | Board waits for the clap, so it no longer has to be timed |
 | Spaced array built and measured | Working | 9.25 x 9.9 cm, calipered port to port |
-| Offline localization from real claps | Working | +0.58 deg error at 0 deg, 2.1 m from the nearest wall |
-| On-board localization (CMSIS-DSP) | Validated on one capture | All six delays match Python to 0.000 samples, bearing to 0.002 deg |
+| Localization from real claps | Working | 8 angles, 39 claps, mean error 1.11 deg, worst 4.04 deg |
+| On-board localization (CMSIS-DSP) | Validated | 44 captures compared, all six delays match Python to 0.000 samples, bearings to 0.004 deg |
 | Guided capture sessions | Working | One command per sweep, quality check and retake at the bench, resumable |
 
 ### Measured result
 
-One clap at a known 0 degrees, array 2.1 m from the nearest wall, source 1.5 m
-out (2026-07-29):
+Full sweep, 2026-07-29. Eight angles at 45 degree spacing, five claps each,
+source 1.5 m out, array 2.1 m from the nearest wall:
 
-| Quantity | Board | Python reference |
-|----------|-------|------------------|
-| Estimated bearing | 0.340 deg | 0.338 deg |
-| Error against truth | +0.34 deg | +0.34 deg |
-| Worst triangle residual | 0.118 samples | 0.118 samples |
+| True angle | Trials | Mean error | Spread (std) | Worst |
+|-----------:|-------:|-----------:|-------------:|------:|
+| 0 | 5 | -1.42 deg | 1.17 | 3.31 |
+| 45 | 5 | -1.07 deg | 1.06 | 2.20 |
+| 90 | 5 | -0.17 deg | 0.57 | 0.86 |
+| 135 | 5 | +0.17 deg | 0.65 | 0.82 |
+| 180 | 5 | -1.43 deg | 0.90 | 2.80 |
+| 225 | 4 | -1.32 deg | 1.82 | 3.87 |
+| 270 | 5 | -0.40 deg | 0.38 | 0.99 |
+| 315 | 5 | -1.41 deg | 1.41 | 4.04 |
+| **all** | **39** | **1.11 deg mean \|error\|** | 0.99 | **4.04** |
 
-The board computed that itself, in float32 with CMSIS-DSP, and it agrees with
-the float64 numpy reference on the same samples to 0.002 degrees. All six pair
-delays match to 0.000 samples. That is the embedded port validated end to end.
+For scale, the same estimator on synthetic claps through the same geometry, with
+no reverberation and exact geometry handed to it, gives mean 0.99 deg and worst
+2.41 deg. The real array is performing at close to the simulation's own accuracy
+floor, which is better than expected: reverberation was predicted to cost
+several degrees.
+
+Note the pattern in the per-angle means. Within any one angle the spread is
+small (0.38 to 1.82 deg), but the mean shifts by angle, from -1.43 to +0.17.
+That shape points at ground truth rather than the array: each angle's floor mark
+was placed by hand and carries its own fixed offset, which a whole angle then
+inherits. The array's repeatability is visibly better than its accuracy against
+those marks, so better protractor work would likely improve the headline number.
+
+The board computes all of this itself, in float32 with CMSIS-DSP, and agrees
+with the float64 numpy reference on identical samples across all 44 captures
+compared: every pair delay to 0.000 samples and every bearing to within 0.004
+degrees.
 
 For comparison, the same array in the same room but 65 cm from a wall gave
 -3.40 deg with a residual of 0.875 samples. The wall reflection was corrupting
@@ -176,14 +197,20 @@ its roughly 1 degree is a clean room ceiling, not a prediction.
 
 ## What is not done
 
-- **The port is validated on one capture, at one angle.** 0 degrees is the
-  easiest case: the source sits on the axis where two of the six pairs read
-  near zero. Agreement should hold everywhere, but it has only been shown
-  there, and a sweep is what would prove it.
-- **The ground-truthed validation set is thin.** Three older trials at 0 and
-  315 degrees, all recorded with the source only 40 cm away, which is too close
-  (see the distance note under Usage), plus the one good capture at 0. The
-  deliverable plot needs a full sweep at a sensible distance.
+- **Accuracy is limited by the ground truth, not measured against a better
+  reference.** The angles come from a protractor and floor marks placed by hand,
+  and the per-angle bias pattern above suggests those marks carry roughly a
+  degree of error themselves. The array is probably better than 1.11 degrees; we
+  cannot currently prove it.
+- **One room, one session, one source type.** All 39 claps were recorded in the
+  same room at the same 1.5 m distance in a single sitting. Nothing tests a
+  different room, a different distance, or a source that is not a clap.
+- **The triangle residual is a weak predictor of error.** Trials with residuals
+  up to 2.5 samples still produced bearings within a degree, while the one
+  catastrophic trial (101 degrees off, the trigger caught something other than
+  the clap) had a clean 0.070 residual. It reliably flags a corrupted capture
+  but should not be read as an error estimate, and the 0.3 sample threshold the
+  bench check uses is stricter than the data justifies.
 - **No wireless, and only one node.** The "wireless sensor network" part of the
   title is the eventual goal, not something built. A single node estimates a
   bearing; multiple nodes cross-bearing to a position is future work.
