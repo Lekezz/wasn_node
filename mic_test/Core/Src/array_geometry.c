@@ -13,8 +13,8 @@
    top-to-bottom span. These two numbers are the ones to change if you
    re-measure or re-space the current build; everything downstream follows.
    Same values as BUILT_WIDTH_X / BUILT_HEIGHT_Y in array_geometry.py. */
-#define BUILT_WIDTH_X    0.0925f   /* 9.25 cm, mic0<->mic1, calipered */
-#define BUILT_HEIGHT_Y   0.0990f   /* 9.90 cm, mic0<->mic2, calipered */
+#define BUILT_WIDTH_X    0.0925f   /* 9.25 cm, mic0<->mic1, ruler */
+#define BUILT_HEIGHT_Y   0.0990f   /* 9.90 cm, mic0<->mic2, ruler */
 
 /* Corner positions of a rectangle centred on the origin, in the physical
    labelling mic0 top-left, mic1 top-right, mic2 bottom-left, mic3

@@ -34,7 +34,7 @@
 typedef struct {
     const char *name;                        /* matches the Python key */
     float       pos[LOC_NUM_MICS][2];        /* metres, (x, y) per mic */
-    int         measured;                    /* 1 only if calipered */
+    int         measured;                    /* 1 if really measured */
     const char *note;
 } array_layout_t;
 
