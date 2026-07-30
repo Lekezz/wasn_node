@@ -401,7 +401,7 @@ def main(argv):
 
     d = geom.describe(geom.active_positions())
     print(f"array geometry: {geom.ACTIVE} "
-          f"({'measured' if geom.is_measured() else 'NOMINAL, not calipered'})"
+          f"({'measured' if geom.is_measured() else 'NOMINAL, not measured'})"
           f", condition number {d['cond']:.2f}")
     if d["rank"] < 2:
         raise SystemExit("the active layout is collinear, so no bearing from "

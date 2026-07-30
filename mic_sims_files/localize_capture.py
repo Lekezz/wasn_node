@@ -98,7 +98,7 @@ def check_geometry(mic_pos):
     if not ARRAY_MEASURED:
         print("  WARNING: this layout is not marked as measured, so the")
         print("  positions are nominal. Any bearing below is provisional.")
-        print("  Measure port to port with calipers, put the numbers in")
+        print("  Measure port to port on the mic ports, put the numbers in")
         print("  array_geometry.py, and set measured=True for this layout.")
     print()
     return True

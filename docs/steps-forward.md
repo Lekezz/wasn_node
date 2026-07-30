@@ -6,7 +6,7 @@ bench with the board. Read the one page `bench-checklist.md` alongside this.
 ## Where the project actually is
 
 Proven on hardware: single mic capture, four mic synchronized capture, clap
-triggering, the built and calipered 9.25 x 9.9 cm array, and offline
+triggering, the built and ruler-measured 9.25 x 9.9 cm array, and offline
 localization from real claps. Best real result is +0.58 deg error at a true
 0 deg with 2.1 m of wall clearance, worst triangle residual 0.119 samples.
 

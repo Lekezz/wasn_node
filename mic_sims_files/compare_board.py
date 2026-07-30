@@ -499,7 +499,7 @@ def main(argv):
 
     print(f"geometry: {ls.__name__} reference, active layout "
           f"{lc.MIC_POS.shape[0]} mics, "
-          f"{'measured' if lc.ARRAY_MEASURED else 'NOMINAL (not calipered)'}")
+          f"{'measured' if lc.ARRAY_MEASURED else 'NOMINAL (not measured)'}")
     print(f"{len(with_report)} trial(s) carry a board report, "
           f"{len(without)} do not\n")
 

@@ -13,7 +13,7 @@ File: square_clap_4mic.npy, int16, shape (4, 16000), 16 kHz, 1 second.
 ## Conditions
 
 - Array: 9.25x9.9-measured layout, mic0 top-left, mic1 top-right, mic2
-  bottom-left, mic3 bottom-right, measured with calipers.
+  bottom-left, mic3 bottom-right, measured with a ruler.
 - Firmware as of the WARMUP_SAMPLES build (commit 484aff7).
 - One clap, TRUE ANGLE 90 degrees (straight off the top edge of the
   array).

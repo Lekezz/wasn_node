@@ -9,12 +9,17 @@ Supervisor: Ben
 ## Status note
 
 This is a writeup of work in progress, not of a finished project. The node
-records four synchronized microphone channels, detects a clap, and estimates
-the direction it came from, and that whole path has been demonstrated on real
-hardware. What is not finished is stated plainly in the last two sections, and
-the most important gap is that the on-board localizer's numerical output has
-not yet been confirmed against the reference on hardware. Any number in this
-document that came from the board rather than from Python is labelled as such.
+records four synchronized microphone channels, detects a clap, and estimates the
+direction it came from, on the board itself, and that whole path is now
+demonstrated and validated on real hardware: a full eight angle sweep localizes
+real claps to a mean error of 1.11 degrees, and the embedded implementation
+agrees with the Python reference on all 44 captures compared.
+
+What is not finished is stated plainly in section 9. The short version is that
+everything here is one node in one room with one type of source, that the
+accuracy figure is bounded by hand-placed floor marks rather than by the array,
+and that nothing has been made wireless, which is the part the project title
+promises.
 
 ---
 
@@ -115,9 +120,38 @@ marked active, because during the build the layout changed twice for reasons
 that had nothing to do with the mathematics: first only one breadboard was
 available, then two were glued together and a near-square fit again.
 
-The built array is 9.25 x 9.9 cm, measured port to port with calipers rather
-than pin to pin, since on a breakout board the microphone port is offset from
-the header pins. Aperture 13.5 cm, which is 6.32 samples at 16 kHz.
+The built array is 9.25 x 9.9 cm, measured port to port rather than pin to pin,
+since on a breakout board the microphone port is offset from the header pins.
+Aperture 13.5 cm, which is 6.32 samples at 16 kHz.
+
+**How it was measured, and what that costs.** The dimensions came off a ruler,
+not calipers. That is worth stating plainly because every bearing in this
+project is computed from those two numbers, so their uncertainty propagates
+into every result. A ruler read against the mic ports is good for something
+like half a millimetre, where calipers would be nearer a tenth.
+
+The useful way to judge whether that matters is to convert it into the units
+the estimator actually works in. One millimetre of position error is about
+0.047 samples of delay at 16 kHz, and the bearing errors measured in the sweep
+are 1 to 4 degrees, which correspond to delay errors an order of magnitude
+larger than that. So the ruler is not the limiting factor at the accuracy this
+array currently achieves, and re-measuring with calipers would not visibly
+move the headline number.
+
+Two honest caveats on that. First, geometry error is systematic rather than
+random: it does not average out over trials, and it biases some bearings more
+than others depending on direction. So it belongs on the list of candidate
+explanations for the per-angle bias discussed in section 6, alongside the floor
+marks, even though the marks are the more likely cause. Second, the argument
+above stops holding if the array ever gets more accurate. Better ground truth
+would be the first thing to raise the accuracy ceiling, and at that point the
+ruler could become the next limit, so calipers are the natural companion to any
+serious attempt at a better protractor setup.
+
+What matters more than the instrument is measuring the right thing. Port to
+port with a ruler beats pin to pin with calipers, because the pin offset is a
+fixed few millimetres of error in a known wrong direction, which is worse than
+half a millimetre of reading noise.
 
 Layouts are scored in simulation by `compare_geometries.py`:
 
@@ -197,35 +231,119 @@ Delays must agree within 0.05 samples and bearing within 0.5 degrees.
 
 ## 6. Results from real claps
 
-All from the built 9.25 x 9.9 cm array, one clap per trial, source at array
-height, offline Python analysis:
+### The sweep
 
-| Session | Wall clearance | True angle | Estimated | Error | Worst triangle residual |
-|---------|----------------|------------|-----------|-------|------------------------|
-| 2026-07-24 | 65 cm | 0 deg | -3.40 deg | -3.40 deg | 0.875 samples |
-| 2026-07-27 | 2.1 m | 0 deg | 0.58 deg | +0.58 deg | 0.119 samples |
-| 2026-07-27 | 2.1 m | 315 deg | 317.12 deg | +2.12 deg | 0.347 samples |
-| 2026-07-27 | 2.1 m | 315 deg | 321.38 deg | +6.38 deg | 0.499 samples |
+The deliverable, recorded 2026-07-29. Eight angles at 45 degree spacing, five
+claps each, source 1.5 m out, array 2.1 m from the nearest wall. Two trials
+were discarded because the source was demonstrably not where it was supposed to
+be, leaving 39.
 
-**The wall was the dominant error source.** At 65 cm from a wall the reflection
-arrived soon enough to overlap the direct sound in the analysis window and
-corrupted one microphone pair specifically. Moving the array to 2.1 m of
-clearance changed the error at 0 degrees from -3.40 to +0.58 degrees, which is
-at the simulation's own accuracy floor. Nothing in the code changed.
+| True angle | Trials | Mean error | Spread (std) | Mean abs error | Worst |
+|-----------:|-------:|-----------:|-------------:|---------------:|------:|
+| 0 | 5 | -1.42 deg | 1.17 | 1.49 | 3.31 |
+| 45 | 5 | -1.07 deg | 1.06 | 1.36 | 2.20 |
+| 90 | 5 | -0.17 deg | 0.57 | 0.51 | 0.86 |
+| 135 | 5 | +0.17 deg | 0.65 | 0.65 | 0.82 |
+| 180 | 5 | -1.43 deg | 0.90 | 1.43 | 2.80 |
+| 225 | 4 | -1.32 deg | 1.82 | 1.72 | 3.87 |
+| 270 | 5 | -0.40 deg | 0.38 | 0.40 | 0.99 |
+| 315 | 5 | -1.41 deg | 1.41 | 1.41 | 4.04 |
+| **all** | **39** | | **0.99** | **1.11** | **4.04** |
 
-**The triangle residual is a self-check that needs no ground truth.** Delay is
-antisymmetric, so for any three microphones the delay from A to B plus B to C
-must equal A to C. It does not when a reflection has corrupted a pair. In the
-table above the residual tracks the error monotonically, which is exactly what
-it is for: it flags a suspect capture without knowing the true angle. The
-firmware prints "inconsistent: suspect a reflection" on its own when the
-residual exceeds 0.3 samples, and it did so on both 315 degree trials
-unprompted.
+**Mean absolute error 1.11 degrees, worst case 4.04 degrees.** For scale, the
+same estimator run on synthetic claps through the same geometry, with no
+reverberation and the exact geometry handed to it, gives 0.99 degrees mean and
+2.41 degrees worst. The real array is performing at the simulation's own
+accuracy floor.
 
-315 degrees is worse than 0 degrees across both trials and it is not yet
-understood why. The array has no blind directions by condition number, so the
-cause is more likely something physical on that diagonal than a property of the
-layout. That is an open item.
+That was not the expectation. Reverberation was predicted to cost several
+degrees, and the earlier notes said the simulation's roughly 1 degree was a
+clean-room ceiling that real measurements would fall well short of. It did not
+happen, and the reason appears to be the combination of a broadband impulsive
+source, a 2048 sample analysis window that closes before most of the room
+response arrives, and 2.1 m of wall clearance.
+
+### The per-angle bias, and why it points at the ground truth
+
+The interesting structure is not the total but the column of per-angle means.
+They run from -1.43 to +0.17 degrees, while the spread *within* any single angle
+stays between 0.38 and 1.82 degrees.
+
+That combination is diagnostic. If the array itself were the limit, error would
+be random from clap to clap and the within-angle spread would be as large as
+the between-angle variation. Instead each angle is internally tight and sits at
+its own small offset, which is the signature of a fixed error per angle rather
+than a noisy measurement. Each angle's floor mark was placed by hand with a
+protractor and tape measure, so each carries its own placement offset, and every
+clap from that mark inherits it.
+
+The consequence is worth stating clearly: **the array is more repeatable than it
+is accurate against these marks, so 1.11 degrees is a bound set by the
+measurement setup rather than by the sensor.** How much better the array
+actually is cannot be answered with this data. Better ground truth is the only
+way to find out, and it is the first thing to fix if the headline number
+matters.
+
+The competing explanation is a geometry error, since a wrong array dimension
+also produces a systematic, direction-dependent bias. Given the dimensions came
+off a ruler (section 4) that cannot be dismissed outright, but the floor marks
+are the more likely cause: half a millimetre of dimension error is about 0.02
+samples, an order of magnitude too small to account for a degree of bias, while
+a few millimetres of error on a floor mark 1.5 m away is about a tenth of a
+degree per millimetre and easily reaches one.
+
+### Earlier sessions, and the two things they taught
+
+| Session | Wall clearance | Clap distance | True | Estimated | Error | Residual |
+|---------|---------------|---------------|------|-----------|-------|----------|
+| 2026-07-24 | 65 cm | 40 cm | 0 deg | -3.40 deg | -3.40 | 0.875 |
+| 2026-07-27 | 2.1 m | 40 cm | 0 deg | 0.58 deg | +0.58 | 0.119 |
+| 2026-07-27 | 2.1 m | 40 cm | 315 deg | 317.12 deg | +2.12 | 0.347 |
+| 2026-07-27 | 2.1 m | 40 cm | 315 deg | 321.38 deg | +6.38 | 0.499 |
+
+**The wall was the dominant error source early on.** At 65 cm the reflection
+arrived soon enough to overlap the direct sound inside the analysis window and
+corrupted one microphone pair specifically. Moving to 2.1 m of clearance changed
+the error at 0 degrees from -3.40 to +0.58 degrees with no code change at all.
+
+**The 315 degree anomaly was measurement, not the array, and it is closed.** It
+looked for several days like a real direction-dependent defect. Two causes
+compounded, both of them consequences of clapping only 40 cm away.
+
+The first is the near field. The estimator assumes a plane wave, which needs
+roughly `2D^2/lambda` of distance; for this 13.55 cm aperture that is 0.86 m at
+8 kHz, so at 40 cm the top of a clap's band arrived measurably curved. A curved
+wavefront fits no single direction, which is what raised those residuals.
+
+The second is placement. Angular error from hand placement scales as 1/distance,
+so 5 cm of it is 7.1 degrees at 40 cm but under 2 degrees at 1.5 m. At 40 cm it
+was simply not possible to clap accurately enough to test a 2 degree effect.
+
+The proof came from a diagnostic worth keeping. Each microphone pair has a null
+direction where its delay should be zero, and for pair 1-2 on this array that
+null sits at 316.94 degrees, close to the 315 being aimed at. That pair's delay
+therefore locates the clap independently of the estimator, and it placed the two
+suspect trials at about 316.8 and 322.9 degrees, matching what the array had
+reported to within 1.5 degrees. The array had been right both times; the ground
+truth was wrong. Re-run at 1.5 m from a taped mark, 315 degrees scores -1.41
+degrees, indistinguishable from every other angle.
+
+### What the triangle residual is and is not good for
+
+Delay is antisymmetric, so for any three microphones the delay from A to B plus
+B to C must equal A to C. It does not when a reflection has corrupted a pair,
+and the appeal is that this needs no knowledge of the true angle, so it works in
+a deployed node where there is no protractor. The firmware prints "inconsistent:
+suspect a reflection" on its own above 0.3 samples.
+
+The sweep showed its limits. It reliably flags a corrupted capture, but it is a
+poor predictor of bearing error: trials with residuals as high as 2.5 samples
+still produced bearings within a degree. The sharpest counterexample is the one
+catastrophic trial in the whole sweep, 101 degrees off, which had a clean 0.070
+residual. The six delays agreed with each other perfectly because the trigger
+had caught a sound that genuinely came from elsewhere. A consistent delay set
+means the estimator saw one coherent source, not that it was the source you
+intended.
 
 ---
 
@@ -272,10 +390,39 @@ costs about 10 KB of flash, the report now formats floats using integer
 arithmetic. No `%f` remains in the project, so this cannot come back from a
 build setting.
 
-**That fix has not been flashed yet.** So as of this writing, no bearing has
-ever actually printed from the board, and the port's arithmetic is unvalidated.
-This is the single highest priority next step, and `compare_board.py` currently
-reports every trial as skipped for this reason.
+**With that flashed on 2026-07-29, the port is validated.** `compare_board.py`
+now passes on all 44 captures taken since: every one of the six pair delays
+agrees with the Python reference to 0.000 samples, every bearing to within 0.004
+degrees, and the onset, transient peak and analysis window are exact on every
+capture. That covers the whole chain, from the clap finder and its histogram
+median through the 4096-point FFT, GCC-PHAT, the sub-sample peak interpolation
+and the least squares fusion.
+
+Two of the disagreements that did show up were faults in the test rather than
+the firmware, and both are worth recording because they are the kind of thing
+that gets waved away.
+
+The first was `peak/noise`, which came back a couple of percent low. The
+firmware does not compute a true median: it bins the envelope into 2048 bins and
+returns the centre of the bin the median falls into, because a real median needs
+a sort or a second pass over 16000 samples. Its noise estimate is therefore
+quantized, and since the ratio divides by that small number, the error
+propagates as the square of the ratio itself. A flat percentage tolerance cannot
+express that, so it was replaced with the derived bound. Worth knowing that this
+field is the weakest test of the noise estimate anyway: the onset is found by
+walking back until the envelope drops below a threshold computed *from* the
+noise, so onset matching exactly, which it does on all 44 captures, is a far
+stricter check of the same quantity.
+
+The second was the analysis window. Both implementations cut 2048 samples around
+the onset, but they clamp differently when the clap lands near the start of the
+buffer: the Python keeps a shorter window, while the firmware slides a
+full-length one because its FFT length and buffers are fixed. Clap-triggered
+capture makes this common rather than rare, since the onset is always early. The
+firmware's behaviour is the correct one, so the comparison now excuses that
+specific divergence after verifying the window really is a legitimate slide, and
+compares the delays on the board's window so the arithmetic is judged against
+the same input.
 
 ---
 
@@ -301,14 +448,17 @@ result without needing to know the right answer.
 
 ## 9. What is not done
 
-- **The on-board float path is unverified on hardware.** The fix is written and
-  committed but not flashed. Until it is, the embedded port is unvalidated
-  beyond its integer stages.
-- **The validation set is two angles and three trials.** A proper
-  estimated-versus-true plot needs a full sweep, ideally eight angles with
-  several trials each.
-- **315 degrees is unexplained.** Worse than 0 degrees in both trials, and the
-  array should have no bad directions.
+- **Accuracy is bounded by the ground truth, not by a better reference.** The
+  true angles come from a protractor and floor marks placed by hand, and the
+  per-angle bias in section 6 suggests those marks carry about a degree of error
+  themselves. The array is probably better than 1.11 degrees and this data
+  cannot prove it.
+- **One room, one sitting, one distance.** All 39 claps were recorded in the
+  same room at 1.5 m in a single session. Nothing tests whether the result
+  survives a different room, which is the obvious next experiment.
+- **The dimensions came off a ruler,** not calipers. Not currently a limiting
+  factor, for the reasons in section 4, but it would become one if the ground
+  truth improved.
 - **Nothing is wireless, and there is one node.** The network part of a
   wireless acoustic sensor network has not been started. One node gives a
   bearing; crossing bearings from several nodes to get a position is future
@@ -322,11 +472,17 @@ result without needing to know the right answer.
 
 ## 10. Immediate next steps
 
-1. Rebuild and flash the current firmware. Confirm the report prints real
-   numbers and that the lowered trigger threshold fires reliably.
-2. Run `compare_board.py` on a fresh capture. This is the acceptance test for
-   the embedded port, and it is currently blocked on step 1.
-3. Investigate 315 degrees, then sweep eight angles with five trials each and
-   regenerate the validation plot.
-4. Decide with Ben whether the next direction is multi-node work, continuous
-   operation, or harder source types.
+Nothing is blocking. The single-node pipeline is complete and validated, so
+what follows is scope rather than repair.
+
+1. Repeat the sweep in a second room, or at a second distance, to find out
+   whether 1.11 degrees survives a change of environment. This is the cheapest
+   experiment with the most to say about whether the result generalises.
+2. Better ground truth, if the headline number matters. The per-angle bias says
+   the floor marks are the limit, so a more careful protractor setup, or a fixed
+   source at a surveyed position, would raise the ceiling. Calipers on the array
+   dimensions belong in the same piece of work.
+3. Decide with Ben whether the next direction is multi-node work, continuous
+   operation, or harder source types. Multi-node is the most interesting and
+   needs inter-node time synchronization, which is a substantial problem of its
+   own and worth raising explicitly rather than assuming.

@@ -40,8 +40,10 @@ rails, and the glue seam between the two boards all break the grid, so the
 width is whatever your boards happen to give. MEASURE the width, do not
 count it.
 
-Either way the final numbers must come from calipers on the mic PORTS, not
-the header pins: the port is offset from the pins on a breakout board. For
+Either way the final numbers must be measured on the mic PORTS, not the
+header pins: the port is offset from the pins on a breakout board. That is
+the part that matters, more than the instrument. The built array was
+measured with a ruler, which is good for roughly half a millimetre. For
 scale, 1 mm of position error is about 0.047 samples of delay, well under
 a degree, so +/- 1 mm is good enough.
 """
@@ -74,20 +76,20 @@ def rect(width_x, height_y):
 # script picks them all up automatically.
 #
 #   positions : metres
-#   measured  : True only once the numbers came off calipers
+#   measured  : True only once the numbers came off the real array
 #   note      : what it needs and what it is for
 # Measured dimensions of the built array. Left-to-right span and
 # top-to-bottom span, in metres. Edit these two numbers if you re-measure
 # or re-space the array; everything downstream follows.
-BUILT_WIDTH_X = 0.0925    # 9.25 cm, mic0<->mic1 (measured with calipers)
-BUILT_HEIGHT_Y = 0.099    # 9.90 cm, mic0<->mic2 (measured with calipers)
+BUILT_WIDTH_X = 0.0925    # 9.25 cm, mic0<->mic1 (ruler, port to port)
+BUILT_HEIGHT_Y = 0.099    # 9.90 cm, mic0<->mic2 (ruler, port to port)
 
 LAYOUTS = {
     "9.25x9.9-measured": {
         "positions": rect(BUILT_WIDTH_X, BUILT_HEIGHT_Y),
         "measured": True,
         "note": "THE BUILT ARRAY. 9.25 cm wide x 9.9 cm tall, mics measured "
-                "port to port with calipers. mic0 top-left, mic1 top-right, "
+                "port to port with a ruler. mic0 top-left, mic1 top-right, "
                 "mic2 bottom-left, mic3 bottom-right. Near-square, no blind "
                 "directions.",
     },

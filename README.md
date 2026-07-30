@@ -21,7 +21,7 @@ made wireless, there is only one node, and only claps have been tested. See
 | Four mic simultaneous capture | Working | Sync proven by clap test 22 July |
 | Channel synchronization | Working | Delays linear in mic position, residual 0.131 samples |
 | Clap-triggered capture | Working | Board waits for the clap, so it no longer has to be timed |
-| Spaced array built and measured | Working | 9.25 x 9.9 cm, calipered port to port |
+| Spaced array built and measured | Working | 9.25 x 9.9 cm, measured port to port with a ruler |
 | Localization from real claps | Working | 8 angles, 39 claps, mean error 1.11 deg, worst 4.04 deg |
 | On-board localization (CMSIS-DSP) | Validated | 44 captures compared, all six delays match Python to 0.000 samples, bearings to 0.004 deg |
 | Guided capture sessions | Working | One command per sweep, quality check and retake at the bench, resumable |
@@ -87,9 +87,15 @@ single most useful practical lesson from the project so far.
 ## Array geometry
 
 The built array is a 9.25 x 9.9 cm near-rectangle on two glued breadboards,
-measured port to port with calipers. Aperture 13.5 cm, which is 6.32 samples
+measured port to port with a ruler. Aperture 13.5 cm, which is 6.32 samples
 at 16 kHz. Condition number 1.07, meaning accuracy is close to uniform in every
 direction and the array has no blind cones.
+
+What matters in that measurement is measuring the mic PORTS rather than the
+header pins, because the port is offset from the pins on a breakout board. A
+ruler puts the dimension uncertainty at roughly half a millimetre, and 1 mm of
+position error is about 0.047 samples of delay, so this is not currently a
+limiting factor.
 
 Geometry lives in `mic_sims_files/array_geometry.py` as a registry of named
 layouts with one marked active. It is not hardcoded in the analysis scripts,
