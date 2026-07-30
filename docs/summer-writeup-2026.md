@@ -116,13 +116,12 @@ is a `uint16_t`.
 
 Geometry is not hardcoded in the analysis scripts. It lives in
 `mic_sims_files/array_geometry.py` as a registry of named layouts with one
-marked active, because during the build the layout changed twice for reasons
-that had nothing to do with the mathematics: first only one breadboard was
-available, then two were glued together and a near-square fit again.
+marked active, because the layout is expected to change and changing it should
+be one edit in one place rather than a hunt through several scripts.
 
 The built array is 9.25 x 9.9 cm, measured port to port rather than pin to pin,
 since on a breakout board the microphone port is offset from the header pins.
-Aperture 13.5 cm, which is 6.32 samples at 16 kHz.
+Aperture 13.55 cm, which is 6.32 samples at 16 kHz.
 
 **How it was measured, and what that costs.** The dimensions came off a ruler,
 not calipers. That is worth stating plainly because every bearing in this
@@ -153,24 +152,14 @@ port with a ruler beats pin to pin with calipers, because the pin offset is a
 fixed few millimetres of error in a known wrong direction, which is worse than
 half a millimetre of reading noise.
 
-Layouts are scored in simulation by `compare_geometries.py`:
+Any candidate layout can be scored in simulation by `compare_geometries.py`
+before it is built, and two things learned from doing that shaped the array.
 
-| Layout | Aperture | Condition number | Mean error | p90 | Worst |
-|--------|----------|------------------|------------|-----|-------|
-| 9.25 x 10 cm | 13.6 cm | 1.08 | 1.03 deg | 2.09 deg | 2.39 deg |
-| 9.25 x 12 cm | 15.2 cm | 1.30 | 0.70 deg | 2.01 deg | 2.16 deg |
-| 9.25 x 16 cm | 18.5 cm | 1.73 | 0.51 deg | 1.10 deg | 1.42 deg |
-| 10 cm square | 14.1 cm | 1.00 | 1.12 deg | 2.32 deg | 2.43 deg |
-| 2.8 x 10 cm (one board) | 10.4 cm | 3.57 | 1.87 deg | 7.87 deg | 8.43 deg |
-| 2.5 cm square | 3.5 cm | 1.00 | 6.33 deg | 8.60 deg | 9.20 deg |
-
-Two things this table teaches:
-
-**Mean error alone is misleading.** The 2.8 x 10 cm single-board rectangle has
-a respectable mean of 1.87 degrees but a terrible p90 of 7.87 degrees, because
-its error is concentrated in four narrow cones about 30 degrees off the long
-axis. Averaged over all directions that looks acceptable; if the source happens
-to sit in one of those cones it is not.
+**Mean error alone is misleading.** A layout can post a respectable mean and
+still be badly behaved, because its error concentrates in a few narrow cones
+where the geometry constrains direction weakly. Averaged over all directions
+that looks acceptable; if the source happens to sit in one of those cones it is
+not. The p90 exposes what the mean hides.
 
 **Condition number predicts that directly.** It is the ratio that says how
 evenly the array constrains direction. Near 1 means accuracy is uniform in
@@ -204,15 +193,14 @@ samples, and full sweep angle error was under 0.1 degrees at both 2 m and 20 m,
 degrading gracefully to about 0.4 degrees at 0 dB SNR. That establishes the
 algorithm is right before any hardware doubt enters.
 
-**Step 2: prove channel synchronization separately from geometry.**
-The four mics were first mounted in a tight straight line about 2 cm apart. At
-that spacing the true acoustic delay across the whole array is under 3 samples,
-so any channel sitting far off had to be a filter synchronization fault rather
-than real physics. A spread out array would have confounded the two. Measured
-delays were 0.000, -0.481, -1.354 and -1.801 samples, monotonic across the line
-and linear in microphone position to within 0.131 samples. Synchronization
-confirmed. That fixture was then retired, because with an aperture under 3
-samples it could never localize anything.
+**Step 2: test channel synchronization separately from geometry.**
+Every timing result rests on the four filters having started together, so that
+is checked on its own rather than inferred from a bearing that happens to look
+right. `check_sync.py` is geometry free on purpose: it reports per-channel
+health and the GCC-PHAT lag of each channel against mic0, and any channel
+sitting further off than the array's own aperture allows is a filter
+synchronization fault rather than acoustics. It runs on every capture, so a
+sync regression shows up before any direction is computed.
 
 **Step 3: share code between the test and the reference.** `check_sync.py`
 imports `gcc_phat` from `localization_sim.py` rather than reimplementing it, so
@@ -234,7 +222,7 @@ Delays must agree within 0.05 samples and bearing within 0.5 degrees.
 ### The sweep
 
 The deliverable, recorded 2026-07-29. Eight angles at 45 degree spacing, five
-claps each, source 1.5 m out, array 2.1 m from the nearest wall. Two trials
+claps each, source 1.1 m out, array 2.1 m from the nearest wall. Two trials
 were discarded because the source was demonstrably not where it was supposed to
 be, leaving 39.
 
@@ -289,44 +277,78 @@ also produces a systematic, direction-dependent bias. Given the dimensions came
 off a ruler (section 4) that cannot be dismissed outright, but the floor marks
 are the more likely cause: half a millimetre of dimension error is about 0.02
 samples, an order of magnitude too small to account for a degree of bias, while
-a few millimetres of error on a floor mark 1.5 m away is about a tenth of a
-degree per millimetre and easily reaches one.
+at 1.1 m, the distance the sweep was recorded at, a mark placed 1 cm off the
+intended angle is already about half a degree of bearing.
 
-### Earlier sessions, and the two things they taught
+That distance also puts a bound on how good the marks must have been. At 1.1 m,
+5 cm of placement error is 2.6 degrees, which is larger than the 1.11 degree
+mean error actually measured. The measurement therefore could not have come out
+as well as it did unless the marks were good to roughly 2 cm, which says the
+result is bounded by the ground truth at least as tightly as the paragraph above
+claims. It is worth being careful about what that argument gives: it bounds how
+bad the marks cannot have been, and it is not a measurement of how good they
+were.
 
-| Session | Wall clearance | Clap distance | True | Estimated | Error | Residual |
-|---------|---------------|---------------|------|-----------|-------|----------|
-| 2026-07-24 | 65 cm | 40 cm | 0 deg | -3.40 deg | -3.40 | 0.875 |
-| 2026-07-27 | 2.1 m | 40 cm | 0 deg | 0.58 deg | +0.58 | 0.119 |
-| 2026-07-27 | 2.1 m | 40 cm | 315 deg | 317.12 deg | +2.12 | 0.347 |
-| 2026-07-27 | 2.1 m | 40 cm | 315 deg | 321.38 deg | +6.38 | 0.499 |
+### The 315 degree anomaly, and why it is closed
 
-**The wall was the dominant error source early on.** At 65 cm the reflection
-arrived soon enough to overlap the direct sound inside the analysis window and
-corrupted one microphone pair specifically. Moving to 2.1 m of clearance changed
-the error at 0 degrees from -3.40 to +0.58 degrees with no code change at all.
+For a while 315 degrees looked like a real direction-dependent defect in the
+array. It was consistently worse than 0 degrees, and two trials at that angle
+disagreed with each other by 4.26 degrees, far more scatter than a stable source
+should produce. The array's condition number of 1.07 ruled out a blind direction
+early, so the cause had to be outside the array.
 
-**The 315 degree anomaly was measurement, not the array, and it is closed.** It
-looked for several days like a real direction-dependent defect. Two causes
-compounded, both of them consequences of clapping only 40 cm away.
-
-The first is the near field. The estimator assumes a plane wave, which needs
-roughly `2D^2/lambda` of distance; for this 13.55 cm aperture that is 0.86 m at
-8 kHz, so at 40 cm the top of a clap's band arrived measurably curved. A curved
-wavefront fits no single direction, which is what raised those residuals.
-
-The second is placement. Angular error from hand placement scales as 1/distance,
-so 5 cm of it is 7.1 degrees at 40 cm but under 2 degrees at 1.5 m. At 40 cm it
-was simply not possible to clap accurately enough to test a 2 degree effect.
+**It was hand placement, not the array.** Those trials were clapped only 40 cm
+from the array. Angular error from hand placement scales as 1/distance, so 5 cm
+of it is 7.1 degrees at 40 cm but under 2 degrees at 1.5 m. At 40 cm it was
+simply not possible to clap accurately enough to test a 2 degree effect.
 
 The proof came from a diagnostic worth keeping. Each microphone pair has a null
 direction where its delay should be zero, and for pair 1-2 on this array that
 null sits at 316.94 degrees, close to the 315 being aimed at. That pair's delay
 therefore locates the clap independently of the estimator, and it placed the two
-suspect trials at about 316.8 and 322.9 degrees, matching what the array had
+suspect trials at about 316.8 and 322.8 degrees, matching what the array had
 reported to within 1.5 degrees. The array had been right both times; the ground
-truth was wrong. Re-run at 1.5 m from a taped mark, 315 degrees scores -1.41
-degrees, indistinguishable from every other angle.
+truth was wrong. Re-recorded in the sweep at 1.1 m from a taped mark, 315 degrees
+scores -1.41 degrees, indistinguishable from every other angle.
+
+Wavefront curvature was the other suspect at 40 cm, and it was investigated
+separately and ruled out. The reason turned out to be interesting in its own
+right, so it gets its own section.
+
+### Near field, and why this array is barely affected by it
+
+The textbook condition for treating an arriving wave as flat is a source
+distance of about `2D^2/lambda`, which for this 13.549 cm aperture at 8 kHz is
+0.856 m. By that rule the 40 cm claps were well inside the near field, and
+curvature is the obvious thing to blame for their errors. It is not the
+explanation, and why it is not is a result in itself.
+
+This array is centrosymmetric: mic0 sits opposite mic3 and mic1 opposite mic2
+about the array centre. The leading curvature term is the same for both
+microphones of each opposed pair, so it cancels when the delays are projected
+onto the baselines in the least squares fit. What survives is the next term, so
+the bearing error from curvature falls as 1/r^2 rather than 1/r. At 315 degrees
+and 40 cm that comes to 0.027 degrees, against the 2.12 and 6.38 degrees
+actually observed, a factor of 29 too small to be the cause. The cancellation
+was checked by counterexample: moving one microphone to break the symmetry
+restores the 1/r behaviour and multiplies the error by about 8.
+`mic_sims_files/nearfield_analysis.py` does this calculation.
+
+**This does not generalise.** It is a property of the symmetric layout, not of
+GCC-PHAT or of TDOA in general. An array without that symmetry gets the 1/r
+term and the textbook bound means what it says.
+
+One structural point is worth adding, because it explains why the residual never
+warned about any of this. Exact spherical delays satisfy the triangle identity
+exactly, so the triangle residual is blind to curvature by construction: it
+cannot rise because of it. The 0.347 and 0.499 sample residuals on those 40 cm
+trials were reflections and noise, and were never evidence of near field.
+
+The practical consequence is that the minimum useful clap distance is set by
+placement accuracy rather than by physics. Keeping placement error under 2
+degrees needs 1.43 m or more, while keeping the curvature contribution under
+0.10 degrees needs only 0.59 m. The 1.5 m recommendation in the bench checklist
+comes from the first of those, not the second.
 
 ### What the triangle residual is and is not good for
 
@@ -374,33 +396,25 @@ real FFT actually needs took that file to 40 KB, and the whole DSP set from
 | FFT buffers in `.ram2` | 49,152 bytes, zero flash cost |
 | Estimated FFT work | about 10 ms per 32 ms frame, roughly 3x headroom |
 
-The port ran on hardware on 27 July. Its integer output matched the Python
-reference exactly on all three captures: transient, onset and analysis window
-were identical on every one (625 with window 369 to 2417, 745 with 489 to 2537,
-534 with 278 to 2326). That is meaningful, because it validates the whole clap
-finding path including a histogram based median the firmware uses in place of
-numpy's median.
+**Floats are formatted with integer arithmetic.** The project links
+`--specs=nano.specs`, whose `printf` leaves out floating point support unless
+the link also pulls in `-u _printf_float`. That flag costs about 10 KB of flash
+and lives in IDE state which a regeneration resets, so instead the report
+formats every float itself, in `f2s()`, using integer arithmetic. No `%f`
+remains anywhere in the project. That is why the image is small and why neither
+a build setting nor a CubeMX regeneration can take the numbers away.
 
-Its floating point output printed as blank, on every field. The cause is that
-the project links `--specs=nano.specs`, whose `printf` omits floating point
-support unless the link also pulls in `-u _printf_float`. Integers printing
-correctly while floats print nothing is the fingerprint of exactly that. Rather
-than enable a linker flag, which is IDE state a regeneration resets and which
-costs about 10 KB of flash, the report now formats floats using integer
-arithmetic. No `%f` remains in the project, so this cannot come back from a
-build setting.
+**The port is validated.** `compare_board.py` passes on all 44 captures taken
+since it was flashed: every one of the six pair delays agrees with the Python
+reference to 0.000 samples, every bearing to within 0.004 degrees, and the
+onset, transient peak and analysis window are exact on every capture. That
+covers the whole chain, from the clap finder and the histogram based median it
+uses in place of numpy's, through the 4096-point FFT, GCC-PHAT, the sub-sample
+peak interpolation and the least squares fusion.
 
-**With that flashed on 2026-07-29, the port is validated.** `compare_board.py`
-now passes on all 44 captures taken since: every one of the six pair delays
-agrees with the Python reference to 0.000 samples, every bearing to within 0.004
-degrees, and the onset, transient peak and analysis window are exact on every
-capture. That covers the whole chain, from the clap finder and its histogram
-median through the 4096-point FFT, GCC-PHAT, the sub-sample peak interpolation
-and the least squares fusion.
-
-Two of the disagreements that did show up were faults in the test rather than
-the firmware, and both are worth recording because they are the kind of thing
-that gets waved away.
+Two disagreements did show up along the way, and both turned out to be faults in
+the test rather than in the firmware. They are worth recording because they are
+the kind of thing that gets waved away.
 
 The first was `peak/noise`, which came back a couple of percent low. The
 firmware does not compute a true median: it bins the envelope into 2048 bins and
@@ -432,17 +446,15 @@ the same input.
 |---------|---------|---------------|
 | CubeMX regeneration | Capture silently broken twice | Regeneration reverted DMA to Normal mode, later to Byte width. Now: commit before and after every regeneration, and diff |
 | UART truncation | Only part of the recording arrived | `HAL_UART_Transmit` size is `uint16_t`, so 128000 truncated to 62464. A compiler warning was the only clue |
-| Blank floats in the board report | Every float field empty, integers fine | `nano.specs` printf without float support. Fixed with integer formatting |
-| Trigger threshold too high | Green LED never went out, capture script timed out with no other symptom | Threshold 2500 was sized next to a wall where claps peaked near 15000. With the wall gone the same clap peaked at 4444. Lowered to 1000 against a measured noise floor of RMS 10 to 18 |
-| False weak-transient warnings | SNR reported as if a loud clap were marginal | The DFSDM output carries a large DC offset that decays for the whole second, and the noise estimate was reading that offset as room noise. Fixed by removing DC before building the envelope |
-| Wall reflection | -3.40 deg error, one pair inconsistent | Not a code problem. Moved the array to 2.1 m clearance |
+| Trigger threshold too high | Green LED never went out, capture script timed out with no other symptom | The threshold had been sized against claps recorded close to a reflecting wall, which peaked far higher than the same clap does in the open. Lowered to 1000 against a measured noise floor of RMS 10 to 18, which keeps 5 to 10x headroom |
+| Wall reflection | Bearing about 3.4 deg off with one microphone pair inconsistent | Not a code problem. A wall 65 cm away put its echo inside the analysis window. Fixed by moving the array to 2.1 m of clearance |
 
 The general lesson across most of these: the failures were silent. A capture
-that times out with no message, a float that prints as nothing, a DMA setting
-that quietly reverted. The defences that worked were committing around
-regenerations so a diff exposes them, treating every compiler warning as
-guilty, and building self-checks like the triangle residual that flag a bad
-result without needing to know the right answer.
+that times out with no message, a DMA setting that quietly reverted, a
+transmission that stopped halfway with no error. The defences that worked were
+committing around regenerations so a diff exposes them, treating every compiler
+warning as guilty, and building self-checks like the triangle residual that flag
+a bad result without needing to know the right answer.
 
 ---
 
@@ -454,7 +466,7 @@ result without needing to know the right answer.
   themselves. The array is probably better than 1.11 degrees and this data
   cannot prove it.
 - **One room, one sitting, one distance.** All 39 claps were recorded in the
-  same room at 1.5 m in a single session. Nothing tests whether the result
+  same room at 1.1 m in a single session. Nothing tests whether the result
   survives a different room, which is the obvious next experiment.
 - **The dimensions came off a ruler,** not calipers. Not currently a limiting
   factor, for the reasons in section 4, but it would become one if the ground

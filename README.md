@@ -13,13 +13,20 @@ reference on all 44 captures compared. What remains is that nothing has been
 made wireless, there is only one node, and only claps have been tested. See
 "What is not done" at the bottom.
 
+![The built array: four PDM microphones at the corners of a 9.25 x 9.90 cm
+rectangle on two breadboards, driven by a NUCLEO-L552ZE-Q](setup.jpeg)
+
+The four microphones sit at the corners of the rectangle. Two of them share
+each data line, using the SEL pin to pick opposite clock edges, so four mics
+need only two data pins.
+
 ## What works today
 
 | Stage | Status | Evidence |
 |-------|--------|----------|
 | Single mic record and dump | Working | Playable WAV over serial, tag `v0.1-single-mic` |
-| Four mic simultaneous capture | Working | Sync proven by clap test 22 July |
-| Channel synchronization | Working | Delays linear in mic position, residual 0.131 samples |
+| Four mic simultaneous capture | Working | Four DFSDM filters started in sync mode, drained as one aligned frame |
+| Channel synchronization | Working | Per-channel lag against mic0 stays inside the aperture bound on every capture (`check_sync.py`) |
 | Clap-triggered capture | Working | Board waits for the clap, so it no longer has to be timed |
 | Spaced array built and measured | Working | 9.25 x 9.9 cm, measured port to port with a ruler |
 | Localization from real claps | Working | 8 angles, 39 claps, mean error 1.11 deg, worst 4.04 deg |
@@ -29,7 +36,7 @@ made wireless, there is only one node, and only claps have been tested. See
 ### Measured result
 
 Full sweep, 2026-07-29. Eight angles at 45 degree spacing, five claps each,
-source 1.5 m out, array 2.1 m from the nearest wall:
+source 1.1 m out, array 2.1 m from the nearest wall:
 
 | True angle | Trials | Mean error | Spread (std) | Worst |
 |-----------:|-------:|-----------:|-------------:|------:|
@@ -61,11 +68,6 @@ with the float64 numpy reference on identical samples across all 44 captures
 compared: every pair delay to 0.000 samples and every bearing to within 0.004
 degrees.
 
-For comparison, the same array in the same room but 65 cm from a wall gave
--3.40 deg with a residual of 0.875 samples. The wall reflection was corrupting
-one microphone pair, and moving away from it was the whole fix. That is the
-single most useful practical lesson from the project so far.
-
 ## Signal chain
 
 ```
@@ -87,7 +89,7 @@ single most useful practical lesson from the project so far.
 ## Array geometry
 
 The built array is a 9.25 x 9.9 cm near-rectangle on two glued breadboards,
-measured port to port with a ruler. Aperture 13.5 cm, which is 6.32 samples
+measured port to port with a ruler. Aperture 13.55 cm, which is 6.32 samples
 at 16 kHz. Condition number 1.07, meaning accuracy is close to uniform in every
 direction and the array has no blind cones.
 
@@ -98,11 +100,9 @@ position error is about 0.047 samples of delay, so this is not currently a
 limiting factor.
 
 Geometry lives in `mic_sims_files/array_geometry.py` as a registry of named
-layouts with one marked active. It is not hardcoded in the analysis scripts,
-because during the build the layout changed twice for purely physical reasons
-(how many breadboards were available). Trying a different array is a one line
-change there, and `compare_geometries.py` scores every registered layout
-automatically.
+layouts with one marked active, rather than being hardcoded in the analysis
+scripts. Trying a different array is a one line change there, and
+`compare_geometries.py` scores every registered layout in simulation.
 
 The array is planar, so it gives bearing in the plane only. A source above the
 plane cannot be told from its mirror below. Elevation would need a non-planar
@@ -135,7 +135,7 @@ mic_sims_files/
   captures/<session>/angle<NNN>/ recorded trials, grouped by room setup then angle
 docs/
   summer-writeup-2026.md         full project writeup: method, results, what is unfinished
-  steps-forward.md               the ordered path from here to a validated result
+  steps-forward.md               handoff: what is proven, what is open, what to decide next
   bench-checklist.md             one page to print and keep at the bench
 ```
 
@@ -156,15 +156,19 @@ then clap once, sharply. Green LED means armed and listening, and timing does
 not matter because the board waits for the clap. Blue LED means it is dumping,
 about 11 s per trial at 115200 baud.
 
-Two things that matter more than they look:
+Three things that matter more than they look:
 
 - **Start the script before pressing the button.** Only one process can hold
   the COM port, so close any serial terminal first.
-- **Clap from 1.5 m or more, from a marked spot.** Closer than about 0.9 m puts
-  the top of a clap's band inside the near field, where the plane-wave model the
-  estimator assumes breaks down. Distance also cuts the angular error from
-  imprecise hand placement, which goes as 1/distance: 5 cm of it is 7 degrees at
-  40 cm but under 2 degrees at 1.5 m.
+- **Keep the array 2 m or more from the nearest wall or large flat surface.** A
+  reflection off something closer than that arrives inside the 2048 sample
+  analysis window and corrupts the delay of whichever microphone pair faces it,
+  which shows up as a plausible looking bearing with a high triangle residual.
+- **Clap from 1.5 m or more, from a marked spot.** What sets the useful minimum
+  is hand placement, not physics. The angular error from placing the source by
+  hand goes as 1/distance, so 5 cm of it is 7 degrees at 40 cm but under 2
+  degrees at 1.5 m. Keeping placement error under 2 degrees needs 1.43 m or
+  more, which is where the recommendation comes from.
 
 `python catch_audio4.py COM4 --tag angle000 --trials 5` still records a single
 angle by hand if you want it.
@@ -209,7 +213,7 @@ its roughly 1 degree is a clean room ceiling, not a prediction.
   degree of error themselves. The array is probably better than 1.11 degrees; we
   cannot currently prove it.
 - **One room, one session, one source type.** All 39 claps were recorded in the
-  same room at the same 1.5 m distance in a single sitting. Nothing tests a
+  same room at the same 1.1 m distance in a single sitting. Nothing tests a
   different room, a different distance, or a source that is not a clap.
 - **The triangle residual is a weak predictor of error.** Trials with residuals
   up to 2.5 samples still produced bearings within a degree, while the one
