@@ -1,0 +1,24 @@
+
+--- localization ---
+array 9.25x9.9-measured  span 9.25 x 9.90 cm  aperture 13.55 cm (6.32 samples)
+  rank 2 of 2, condition number 1.07
+transient at 811, onset 809, peak/noise 141.17
+window 553..2601 (2048 samples)
+  pair   delay (samples)   max physical
+  0-1         -3.912           4.31
+  0-2         -0.052           4.62
+  0-3         -4.479           6.32
+  1-2          4.016           6.32
+  1-3         -0.111           4.62
+  2-3         -3.944           4.31
+worst triangle residual 0.483 samples   (inconsistent: suspect a reflection)
+BEARING 357.95 deg
+  (counterclockwise from +x, which points toward the mic1/mic3
+   edge; 90 deg is off the mic0/mic1 edge)
+timing at 96 MHz, 4 mics, 6 pairs
+  stage                   cycles       us    %
+  find_clap              8677046    90385   22
+  gcc-phat (all pairs)  29526954   307572   77
+  fit + residual            2312       24    0
+  TOTAL                 38206623   397985  100
+--- end ---

@@ -1,0 +1,5 @@
+session 2026-07-30-timing
+=========================
+
+[2026-07-30 18:45] port COM4, 16000 Hz, 4 mics, geometry 9.25x9.9-measured, angles 0, 1 trial(s) each
+

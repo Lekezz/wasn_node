@@ -1,0 +1,2 @@
+when              angle     file          verdict    detail
+2026-07-30 18:46  angle000  trial1        KEPT-FAIL  residual: worst triangle 0.483 samples (need 0.30)
