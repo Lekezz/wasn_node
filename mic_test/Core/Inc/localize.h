@@ -28,6 +28,19 @@ typedef enum {
     LOC_ERR_SINGULAR         /* least squares matrix not invertible          */
 } loc_status_t;
 
+/* Stages timed by the DWT cycle counter when LOC_PROFILE_ENABLE is 1. TOTAL
+   is measured around the whole of Localize_Run, so it is slightly more than
+   the three parts summed: the difference is the geometry check and the
+   window arithmetic, both of which are too small to be worth their own
+   timer. Keep this in step with kStageName[] in localize.c. */
+typedef enum {
+    LOC_STAGE_FIND_CLAP = 0,
+    LOC_STAGE_GCC_PHAT,
+    LOC_STAGE_FIT,
+    LOC_STAGE_TOTAL,
+    LOC_STAGE_COUNT
+} loc_stage_t;
+
 typedef struct {
     loc_status_t status;
 

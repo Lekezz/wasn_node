@@ -24,9 +24,37 @@
    it is named once here rather than open-coded as (C_SOUND / FS). */
 #define LOC_METRES_PER_SAMPLE   (LOC_C_SOUND / LOC_FS)
 
+/* How many microphones the localizer uses. Build-time switch, so the 3-mic
+   triangle and the 4-mic square come from ONE source tree rather than a
+   branch that has to be kept in step by hand:
+
+     4 (default)  the built array, mic0..mic3, 6 pairs, 4 triangles
+     3            the same array with mic3 (bottom-right) dropped, 3 pairs,
+                  1 triangle
+
+   Override from the compiler command line with -DLOC_MIC_COUNT=3. Nothing
+   else needs editing: array_geometry.c switches its pair table and its
+   layout rows on the same symbol, and every loop in localize.c already runs
+   to LOC_NUM_MICS or LOC_NUM_PAIRS.
+
+   This exists to measure a tradeoff, not because 3 mics is better. Dropping
+   a mic takes the condition number from 1.07 to 1.74 and leaves a single
+   triangle, so the residual consistency check loses its cross-check. */
+#ifndef LOC_MIC_COUNT
+#define LOC_MIC_COUNT       4
+#endif
+
+#if LOC_MIC_COUNT == 4
 #define LOC_NUM_MICS        4
 /* Unique unordered pairs of 4 mics: (0,1)(0,2)(0,3)(1,2)(1,3)(2,3). */
 #define LOC_NUM_PAIRS       6
+#elif LOC_MIC_COUNT == 3
+#define LOC_NUM_MICS        3
+/* Unique unordered pairs of 3 mics: (0,1)(0,2)(1,2). */
+#define LOC_NUM_PAIRS       3
+#else
+#error "LOC_MIC_COUNT must be 3 or 4"
+#endif
 
 /* Analysis window cut around the clap onset, in samples. Same split the
    Python scripts use: a little context before the onset, then the body of the
@@ -59,5 +87,20 @@
 /* Condition number above which the array has blind directions worth warning
    about. Mirrors the POOR_CONES threshold in localize_capture.py. */
 #define LOC_POOR_COND       2.0f
+
+/* Cycle-level profiling of the localization stages, using the Cortex-M33 DWT
+   cycle counter. Set to 0 to compile it out entirely; the timing code then
+   costs nothing, not even a branch.
+
+   Timing is reported in the same text block as the bearing, printed BEFORE
+   the "--- end ---" marker because wav4_stream.read_report() stops there.
+
+   LOC_CPU_HZ converts cycles to microseconds and must match the real clock.
+   96 MHz is the configured HCLK: MSI 4 MHz x PLLN 48 / PLLR 2. If the clock
+   tree changes, change this or every reported time is wrong by that ratio. */
+#ifndef LOC_PROFILE_ENABLE
+#define LOC_PROFILE_ENABLE  1
+#endif
+#define LOC_CPU_HZ          96000000u
 
 #endif /* LOC_CONFIG_H */

@@ -20,10 +20,19 @@
    labelling mic0 top-left, mic1 top-right, mic2 bottom-left, mic3
    bottom-right. Written out rather than computed so the table stays a plain
    initialiser you can read at a glance. RECT_* mirrors rect() in the Python. */
+#if LOC_NUM_MICS == 4
 #define RECT(w, h)  { { -(w) / 2.0f,  (h) / 2.0f },   /* mic0 top-left     */ \
                       {  (w) / 2.0f,  (h) / 2.0f },   /* mic1 top-right    */ \
                       { -(w) / 2.0f, -(h) / 2.0f },   /* mic2 bottom-left  */ \
                       {  (w) / 2.0f, -(h) / 2.0f } }  /* mic3 bottom-right */
+#else
+/* 3-mic build: the same three corners in the same places, mic3 simply not
+   populated. Keeping mic0..mic2 at their original coordinates is what makes
+   the comparison fair, because the surviving mics have not moved. */
+#define RECT(w, h)  { { -(w) / 2.0f,  (h) / 2.0f },   /* mic0 top-left     */ \
+                      {  (w) / 2.0f,  (h) / 2.0f },   /* mic1 top-right    */ \
+                      { -(w) / 2.0f, -(h) / 2.0f } }  /* mic2 bottom-left  */
+#endif
 
 /* Named layouts. Order MUST match the enum in array_geometry.h.
    The superseded 2.8x10 single-board rectangle from the Python registry is
@@ -65,9 +74,14 @@ static const array_layout_t kLayouts[GEOM_LAYOUT_COUNT] = {
     },
 };
 
-/* The six unique pairs, in the same order as the Python PAIRS list. */
+/* The unique pairs, in the same order as the Python PAIRS list: ascending by
+   first mic, then by second. */
 static const int kPairs[LOC_NUM_PAIRS][2] = {
+#if LOC_NUM_MICS == 4
     { 0, 1 }, { 0, 2 }, { 0, 3 }, { 1, 2 }, { 1, 3 }, { 2, 3 },
+#else
+    { 0, 1 }, { 0, 2 }, { 1, 2 },
+#endif
 };
 
 

@@ -34,6 +34,83 @@ static int s_ready = 0;
 
 
 /*
+ * Stage profiling with the DWT cycle counter.
+ *
+ * The question this answers is "where does the time actually go", which
+ * matters because the pair loop scales with the number of PAIRS, not mics:
+ * 4 mics give 6 pairs, 3 mics give 3. So dropping one mic halves the
+ * dominant cost while barely touching flash or RAM.
+ *
+ * DWT->CYCCNT is a free-running 32-bit counter at the core clock. At 96 MHz
+ * it wraps every 44.7 seconds, far longer than any stage here, and unsigned
+ * subtraction stays correct across a single wrap anyway.
+ */
+#if LOC_PROFILE_ENABLE
+
+#include "main.h"           /* pulls in the CMSIS core header for DWT */
+
+static uint32_t s_stage_cycles[LOC_STAGE_COUNT];
+static uint32_t s_stage_calls[LOC_STAGE_COUNT];
+static int      s_dwt_ok = 0;
+
+static const char *const kStageName[LOC_STAGE_COUNT] = {
+    "find_clap", "gcc-phat (all pairs)", "fit + residual", "TOTAL",
+};
+
+static void profile_init(void)
+{
+    /* ARMv8-M renamed the debug block; accept either CMSIS spelling. */
+#if defined(DCB)
+    DCB->DEMCR |= DCB_DEMCR_TRCENA_Msk;
+#else
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+#endif
+
+    /* Some parts implement DWT without a cycle counter. Ask before trusting
+       it, otherwise every number below would silently read zero. */
+    if (DWT->CTRL & DWT_CTRL_NOCYCCNT_Msk) {
+        s_dwt_ok = 0;
+        return;
+    }
+    DWT->CYCCNT = 0;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    s_dwt_ok = 1;
+}
+
+static inline uint32_t profile_now(void)
+{
+    return s_dwt_ok ? DWT->CYCCNT : 0u;
+}
+
+static inline void profile_add(loc_stage_t stage, uint32_t t0)
+{
+    if (!s_dwt_ok) return;
+    s_stage_cycles[stage] += (uint32_t)(DWT->CYCCNT - t0);
+    s_stage_calls[stage]++;
+}
+
+static void profile_reset(void)
+{
+    for (int i = 0; i < LOC_STAGE_COUNT; i++) {
+        s_stage_cycles[i] = 0;
+        s_stage_calls[i]  = 0;
+    }
+}
+
+#define PROF_T0(var)          const uint32_t var = profile_now()
+#define PROF_END(stage, var)  profile_add((stage), (var))
+
+#else   /* profiling compiled out */
+
+#define PROF_T0(var)          ((void)0)
+#define PROF_END(stage, var)  ((void)0)
+static inline void profile_init(void)  { }
+static inline void profile_reset(void) { }
+
+#endif  /* LOC_PROFILE_ENABLE */
+
+
+/*
  * Format a float without needing newlib's floating-point printf.
  *
  * The project links --specs=nano.specs, whose printf omits float support
@@ -75,6 +152,7 @@ static const char *f2s(char *buf, int n, float v, int dp)
 
 int Localize_Init(void)
 {
+    profile_init();
     s_ready = GccPhat_Init();
     return s_ready;
 }
@@ -274,7 +352,12 @@ loc_status_t Localize_Run(const int16_t *const channels[LOC_NUM_MICS],
         return out->status;
     }
 
+    profile_reset();
+    PROF_T0(t_total);
+
+    PROF_T0(t_find);
     find_clap(channels, n_samples, out);
+    PROF_END(LOC_STAGE_FIND_CLAP, t_find);
 
     /*
      * Cut the window around the onset, kept inside the capture.
@@ -317,6 +400,7 @@ loc_status_t Localize_Run(const int16_t *const channels[LOC_NUM_MICS],
     float ata_xx = 0.0f, ata_xy = 0.0f, ata_yy = 0.0f;   /* A'A */
     float atb_x  = 0.0f, atb_y  = 0.0f;                  /* A'b */
 
+    PROF_T0(t_phat);
     for (int p = 0; p < LOC_NUM_PAIRS; p++) {
         int i, j;
         Geom_Pair(p, &i, &j);
@@ -347,6 +431,9 @@ loc_status_t Localize_Run(const int16_t *const channels[LOC_NUM_MICS],
         atb_y  += by * rhs;
     }
 
+    PROF_END(LOC_STAGE_GCC_PHAT, t_phat);
+
+    PROF_T0(t_fit);
     out->worst_triangle_residual = worst_triangle_residual(out->pair_delay);
 
     /* Solve the 2x2 normal equations by hand. */
@@ -364,6 +451,9 @@ loc_status_t Localize_Run(const int16_t *const channels[LOC_NUM_MICS],
     float deg = atan2f(uy, ux) * (180.0f / (float)M_PI);
     if (deg < 0.0f) deg += 360.0f;
     out->bearing_deg = deg;
+
+    PROF_END(LOC_STAGE_FIT, t_fit);
+    PROF_END(LOC_STAGE_TOTAL, t_total);
 
     out->status = LOC_OK;
     return out->status;
@@ -436,5 +526,28 @@ void Localize_Report(const loc_result_t *result)
     printf("BEARING %s deg\r\n", f2s(a, sizeof a, result->bearing_deg, 2));
     printf("  (counterclockwise from +x, which points toward the mic1/mic3\r\n"
            "   edge; 90 deg is off the mic0/mic1 edge)\r\n");
+
+#if LOC_PROFILE_ENABLE
+    if (s_dwt_ok) {
+        const uint32_t total = s_stage_cycles[LOC_STAGE_TOTAL];
+        printf("timing at %lu MHz, %d mics, %d pairs\r\n",
+               (unsigned long)(LOC_CPU_HZ / 1000000u),
+               LOC_NUM_MICS, LOC_NUM_PAIRS);
+        printf("  stage                   cycles       us    %%\r\n");
+        for (int st = 0; st < LOC_STAGE_COUNT; st++) {
+            const uint32_t cyc = s_stage_cycles[st];
+            /* Integer microseconds: cycles / (Hz / 1e6). No float printf, and
+               no overflow, because cyc is well under 2^32 / 1. */
+            const uint32_t us = cyc / (LOC_CPU_HZ / 1000000u);
+            const uint32_t pct = total ? (uint32_t)(((uint64_t)cyc * 100u) / total) : 0u;
+            printf("  %-20s %9lu %8lu %4lu\r\n",
+                   kStageName[st], (unsigned long)cyc,
+                   (unsigned long)us, (unsigned long)pct);
+        }
+    } else {
+        printf("timing unavailable: DWT has no cycle counter on this part\r\n");
+    }
+#endif
+
     printf("--- end ---\r\n");
 }
