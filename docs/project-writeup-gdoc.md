@@ -66,21 +66,78 @@ with y0, y1, y2 the magnitudes at peak-1, peak and peak+1. The reported delay is
 
 ### 3.2 The direction estimate
 
-**Far field assumption.** If the source is far enough away compared to the array size, the arriving wavefront is effectively flat across the array. Distance then stops mattering and all that survives is the direction, a unit vector `u = (ux, uy)` pointing from the array toward the source.
+GCC-PHAT hands us six delays. This stage turns them into one bearing. The idea is simpler than the matrix notation suggests, so it is worth building up before writing it down formally.
+
+**What one microphone pair actually measures.** Take mic0 and mic1, 9.25 cm apart along the top edge. If the clap comes from directly to the right, the sound reaches mic1 first and must travel the full 9.25 cm further to reach mic0. That extra trip is 9.25 cm / 343 m/s = 0.27 ms, which at 16 kHz is 4.31 samples. That is the largest delay this pair can ever produce, and it is the number the board prints as `max physical` for that pair. Swing the source around to directly above the array instead and both microphones are equidistant, so the delay is zero. In between, the delay follows a cosine.
+
+So one pair measures a single quantity: how much of the source direction lies along that pair's own line. It is the length of the direction's shadow cast onto the mic-to-mic axis.
+
+**Why one pair is never enough.** A shadow loses information. A delay of zero on the mic0/mic1 pair means the source is directly above the array or directly below it, and the pair cannot distinguish the two. Any single pair leaves a whole family of directions consistent with its measurement.
+
+Adding a pair that runs a different way fixes this. The mic0/mic2 pair runs vertically, 9.9 cm apart, so it measures the up-down part of the direction while mic0/mic1 measures the left-right part. Two different shadows are enough to reconstruct the direction itself.
+
+This is the real reason the array must not be collinear. If all four microphones sat in a line, every pair would run parallel and every pair would measure the same shadow. You would hold four copies of one measurement and none of the other, and the perpendicular component of the direction would be unconstrained no matter how many microphones you added.
+
+**The far field assumption.** If the source is far away compared with the array size, the arriving wavefront is effectively flat across the array. Distance then drops out of the problem and only direction survives, as a unit vector `u = (ux, uy)` pointing from the array toward the source.
 
 **The model.** For a plane wave, arrival times at microphones i and j satisfy
 
 `t_j - t_i = ((pos_i - pos_j) . u) / c`
 
-In words: take the vector between the two microphones, project it onto the direction the sound comes from, and divide by the speed of sound. That projection is the extra distance the wave travels to reach the later microphone. A microphone further along `u` is closer to the source and hears the clap earlier.
+In words: take the vector between the two microphones, project it onto the direction the sound comes from, and divide by the speed of sound. That projection is the extra distance the wave travels to reach the later microphone, and it is the shadow described above. A microphone further along `u` is closer to the source and hears the clap earlier.
 
-**Six equations, two unknowns.** The left side is measured by GCC-PHAT; the right side is linear in `u`. Each pair gives one equation in two unknowns, and four microphones give six unique pairs, so the system is 6 by 2, overdetermined by four equations. **That redundancy is the point.** If one pair's correlation peak is pulled onto the wrong lobe by a reflection, the other five outvote it and the direction barely moves.
+**The two unknowns.** Writing the dot product out makes clear what is actually being solved for:
 
-**Least squares.** Stack the baselines into a matrix A (row p is `pos_i - pos_j`) and the delays, converted from samples to metres of path difference, into a vector b, then solve `A u = b` in the least squares sense. Python calls `numpy.linalg.lstsq`. The firmware forms the normal equations `(A'A) u = A'b`, where `A'A` is only 2 by 2 and inverts in closed form with a determinant and four multiplications. No iteration, no library. Bearing is `atan2(uy, ux)`, wrapped to 0..360. The length of `u` is discarded, since noise makes it drift from 1 and only its direction carries information.
+`delay = [ (xi - xj) * ux + (yi - yj) * uy ] / c`
 
-**Why the condition number matters.** It is the ratio of A's two singular values, and it measures how evenly the baselines cover direction space. Near 1 means every direction is constrained about equally, so accuracy is uniform with no blind spots. This array scores **1.070**. A high value means narrow cones of bearing where a small delay error produces a large angle error: an earlier, much thinner 2.8 cm by 10 cm layout had four such cones reaching 8 degrees. The extreme case is a collinear array, where every baseline is parallel, A is rank 1, the across-axis component of `u` is unconstrained, and the angle collapses to 0 or 180 regardless of truth. Both implementations compute the rank and refuse to answer if it is 1, rather than printing a plausible looking number.
+The microphone spacings `(xi - xj)` and `(yi - yj)` are known, because the array was measured with a ruler. The speed of sound is known. The delay was just measured by GCC-PHAT. So `ux` and `uy` are the only unknowns in the whole system, and every pair contributes one equation of the plain form `(number) * ux + (number) * uy = (number)`.
 
-**The triangle residual, honestly.** A single plane wave forces every triangle of delays to close: `d(i,j) + d(j,k)` must equal `d(i,k)`. The code checks all four triangles and reports the worst residual. It costs almost nothing and reliably flags a corrupted capture. But the project measured how well it predicts bearing error, and the answer is poorly. Trials with residuals up to 2.5 samples still gave bearings within a degree, while the one catastrophic capture in the dataset, 101 degrees off because the trigger caught something that was not the clap, had a clean residual of 0.070. It is a corruption detector, not an error bar, and the 0.3 sample warning threshold in the bench check is already stricter than the data justifies.
+Two points about that choice are worth making explicit, because both are design decisions rather than accidents.
+
+First, a direction is really only one number, the angle, so why solve for two? Because solving for the angle directly would put `cos` and `sin` of the unknown into the equations, making them nonlinear and requiring an iterative solver. Treating `ux` and `uy` as two independent unknowns makes every equation linear, which is what gives least squares an exact closed-form answer. The single angle is recovered at the very end with `atan2`. One nonlinear unknown is traded for two linear ones, and that trade is why the fit costs 2,312 cycles rather than an iteration loop.
+
+Second, there are two unknowns and not three because the array is flat. A direction in three dimensions needs `uz` as well, and a planar array physically cannot supply it. That is the elevation limitation listed in section 8, seen from the algebra side.
+
+**A worked example, from real data.** Trial 3 at 135 degrees in the sweep. Pair 0-1 runs horizontally, so `pos0 - pos1 = (-0.0925, 0)` metres, and its measured delay of 2.970 samples is 0.0637 m of extra path:
+
+`-0.0925 * ux + 0 * uy = 0.0637`, giving `ux = -0.688`
+
+The `uy` term vanished because a horizontal pair is blind to up and down. Pair 0-2 runs vertically, `pos0 - pos2 = (0, 0.099)`, measured 3.144 samples or 0.0674 m:
+
+`0 * ux + 0.099 * uy = 0.0674`, giving `uy = +0.681`
+
+Then `atan2(0.681, -0.688)` is 135.3 degrees. Two pairs were enough to get within a third of a degree. The full six-pair fit gives 135.45.
+
+Note also that `u` came out with length 0.968 rather than exactly 1, even though a pure direction should be a unit vector. Measurement noise makes the length drift. Only the angle carries information, so the magnitude is discarded.
+
+**Six equations, two unknowns.** Four microphones give six unique pairs, so the system is 6 by 2, overdetermined by four equations. **That redundancy is the point.** Here is the same trial across all six pairs, against what the geometry predicts for a source at exactly 135 degrees:
+
+| Pair | Predicted (samples) | Measured (samples) |
+|---|---|---|
+| 0-1 | 3.05 | 2.970 |
+| 0-2 | 3.27 | 3.144 |
+| 0-3 | 6.32 | 6.165 |
+| 1-2 | 0.21 | 0.191 |
+| 1-3 | 3.27 | 3.146 |
+| 2-3 | 3.05 | 3.062 |
+
+Every pair is close but none is exact, which is what real measurements look like. If one pair's correlation peak is pulled onto the wrong lobe by a reflection, the other five outvote it and the direction barely moves. With only two pairs there would be nothing to contradict a corrupted one.
+
+Pair 1-2 reading almost zero here is the shadow situation again, and it is independently useful: that pair nulls at 136.94 degrees, so near a true 135 it should read close to zero. Each pair has such a null direction, which makes it a free check on the setup before any analysis runs.
+
+**Least squares.** This is the line of best fit, applied to a direction instead of a line. Six pairs each vote for a direction and they disagree slightly, so the fit finds the single direction that disagrees least with all six at once: for each pair, take how far off it is, square it, sum the six, and minimise the total. Squaring makes large misses hurt disproportionately, so the answer avoids being badly wrong about any one pair, and it is also what makes the minimum solvable in closed form.
+
+Formally, stack the baselines into a matrix A (row p is `pos_i - pos_j`) and the delays, converted from samples to metres of path difference, into a vector b, then solve `A u = b` in the least squares sense. Python calls `numpy.linalg.lstsq`. The firmware forms the normal equations `(A'A) u = A'b`. Because there are only ever two unknowns no matter how many pairs feed in, `A'A` is only 2 by 2 and inverts in closed form with a determinant and four multiplications. No iteration, no library. Bearing is `atan2(uy, ux)`, wrapped to 0..360.
+
+**Why the condition number matters.** It is the ratio of A's two singular values, and it measures how evenly the baselines cover direction space.
+
+The intuition is two people locating a landmark by pointing at it. Standing well apart, their lines of sight cross sharply and the fix is precise. Standing close together, the lines are nearly parallel, they cross at a shallow angle, and a small wobble in either arm moves the crossing point a long way. The condition number scores that effect in one figure.
+
+Near 1 means every direction is constrained about equally, so accuracy is uniform with no blind spots. This array scores **1.070**. A high value means narrow cones of bearing where a small delay error produces a large angle error: an earlier, much thinner 2.8 cm by 10 cm layout had four such cones reaching 8 degrees. It is also the quantity that degrades when a microphone is dropped, from 1.070 to 1.740, which is why the three-microphone configurations in section 7.1 fail along specific diagonals rather than uniformly.
+
+The extreme case is the collinear array from earlier: every baseline parallel, A is rank 1, the across-axis component of `u` unconstrained, and the angle collapses to 0 or 180 regardless of truth. Both implementations compute the rank and refuse to answer if it is 1, rather than printing a plausible looking number.
+
+**The triangle residual, honestly.** A single plane wave forces every triangle of delays to close: `d(i,j) + d(j,k)` must equal `d(i,k)`, the way a detour must total the same as the direct route. The code checks all four triangles and reports the worst residual. It costs almost nothing and reliably flags a corrupted capture. But the project measured how well it predicts bearing error, and the answer is poorly. Trials with residuals up to 2.5 samples still gave bearings within a degree, while the one catastrophic capture in the dataset, 101 degrees off because the trigger caught something that was not the clap, had a clean residual of 0.070. It was internally consistent, just consistently measuring the wrong sound. It is a corruption detector, not an error bar, and the 0.3 sample warning threshold in the bench check is already stricter than the data justifies.
 
 ## 4. Getting it onto the microcontroller
 
