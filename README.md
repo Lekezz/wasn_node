@@ -122,44 +122,49 @@ mic_sims_files/
   localization_sim.py            reference implementation, the thing everything is checked against
   array_geometry.py              layout registry and active selection
   capture_paths.py               where captures live on disk
-  run_session.py                 guided sweep: one command for a whole session
-  trial_quality.py               is this capture good enough to keep
-  wav4_stream.py                 the WAV4 serial protocol, shared by the capture tools
-  replay_source.py               fake serial and fault injection, so the path runs with no board
-  catch_audio4.py                4-channel serial capture -> wav + npy + board report
   check_sync.py                  per-channel health and channel alignment
   localize_capture.py            one real capture -> bearing
   compare_board.py               board's answer vs Python, on identical samples
   compare_geometries.py          scores every registered layout
+  compare_mic_count.py           four mics vs each three-mic triangle, on the same claps
+  nearfield_analysis.py          how close a source can sit before curvature matters
   plot_validation.py             estimated vs true bearing plot
-  captures/<session>/angle<NNN>/ recorded trials, grouped by room setup then angle
+  captures/<session>/            session notes, quality logs, and the board's own reports
 docs/
-  summer-writeup-2026.md         full project writeup: method, results, what is unfinished
-  steps-forward.md               handoff: what is proven, what is open, what to decide next
-  bench-checklist.md             one page to print and keep at the bench
+  project-writeup-gdoc.md        full writeup: method, algorithms, results, what is unfinished
+  summer-presentation.pptx       the slide deck
 ```
 
 ## Usage
 
-Recording a session. One command walks the whole sweep, prompts you between
-angles, checks each trial at the bench and offers a retake, and resumes if you
-stop partway:
+The simulation and geometry tools need no hardware and no recorded data, so
+they run straight from a clone:
 
 ```
-python run_session.py COM4 --session 2026-07-29-sweep \
-    --angles 0,45,90,135,180,225,270,315 --trials 5 \
-    --notes "wall 2.1 m, clap 1.5 m"
+python localization_sim.py     # synthetic sources through the reference estimator
+python compare_geometries.py   # scores every registered layout, flags blind directions
+python nearfield_analysis.py   # curvature against placement error, versus source range
 ```
 
-Per trial: press Enter when the source is placed, press the blue user button,
-then clap once, sharply. Green LED means armed and listening, and timing does
-not matter because the board waits for the clap. Blue LED means it is dumping,
-about 11 s per trial at 115200 baud.
+The analysis tools run on recorded captures:
 
-Three things that matter more than they look:
+```
+python check_sync.py                       # are the four channels healthy and aligned
+python localize_capture.py --true-angle 0  # one capture -> bearing
+python compare_board.py                    # does the firmware agree with the reference
+python compare_mic_count.py                # four mics against each three-mic triangle
+python plot_validation.py                  # estimated vs true bearing, all sessions
+```
 
-- **Start the script before pressing the button.** Only one process can hold
-  the COM port, so close any serial terminal first.
+The raw audio these read is not published. Four channels at 16 kHz is 128 KB
+per second, and it is re-recordable. What is published is each session's
+provenance: the notes, the quality log, and the board's own printed report for
+every trial, under `captures/<session>/`. The serial capture tools that
+produced them are not in this repo either, since they are bench rig rather
+than result.
+
+If you are reproducing this, three things matter more than they look:
+
 - **Keep the array 2 m or more from the nearest wall or large flat surface.** A
   reflection off something closer than that arrives inside the 2048 sample
   analysis window and corrupts the delay of whichever microphone pair faces it,
@@ -169,20 +174,9 @@ Three things that matter more than they look:
   hand goes as 1/distance, so 5 cm of it is 7 degrees at 40 cm but under 2
   degrees at 1.5 m. Keeping placement error under 2 degrees needs 1.43 m or
   more, which is where the recommendation comes from.
+- **Clap sharply, once.** The trigger waits for a transient, so timing does not
+  matter, but a soft or doubled clap gives a weak or ambiguous onset.
 
-`python catch_audio4.py COM4 --tag angle000 --trials 5` still records a single
-angle by hand if you want it.
-
-Analysis:
-
-```
-python run_session.py --summary --session NAME   # progress, opens no COM port
-python trial_quality.py --true-angle 0           # re-check the newest capture
-python check_sync.py          # are the four channels healthy and aligned
-python localize_capture.py --true-angle 0
-python compare_board.py       # does the firmware agree with the reference
-python plot_validation.py     # estimated vs true bearing, all sessions
-```
 
 `localization_sim.py` also runs standalone and prints estimated versus true
 angles for a simulated sweep, with no hardware involved.

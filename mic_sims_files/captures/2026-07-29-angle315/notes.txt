@@ -1,6 +1,0 @@
-session 2026-07-29-angle315
-===========================
-
-[2026-07-29 15:40] port COM4, 16000 Hz, 4 mics, geometry 9.25x9.9-measured, angles 315, 5 trial(s) each
-    wall 2.1 m, clap 1.5 m, taped floor mark
-

@@ -1,2 +1,0 @@
-when              angle     file          verdict    detail
-2026-07-29 15:26  angle000  trial1        PASS       bearing 0.34 deg, error +0.34 deg, residual 0.118
